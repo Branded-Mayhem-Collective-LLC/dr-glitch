@@ -320,30 +320,28 @@ Deliverable: `clamp` and `coverageFor` are exported and covered. No behavior cha
 
 **Files:**
 - Modify: `src/studio/halftone.ts` (add `export` to two existing functions only)
-- Create: `vitest.config.ts`, `tests/unit/halftone-math.test.ts`
+- Create: `vitest.workspace.ts`, `tests/unit/halftone-math.test.ts`
 
 **Interfaces:**
 - Consumes: `src/studio/halftone.ts` from Task 1.
 - Produces: `export function clamp(value: number, min?: number, max?: number): number` and `export function coverageFor(plate: Exclude<Plate,"composite">, red: number, green: number, blue: number, settings: HalftoneSettings): number`.
 
-- [ ] **Step 1: Create `vitest.config.ts` with a unit project**
+- [ ] **Step 1: Create `vitest.workspace.ts`**
+
+Vitest 2.1 (pinned, because `@cloudflare/vitest-pool-workers@0.5.x` peer-requires `vitest 2.0.x - 2.1.x`) has no `test.projects` option. That is a Vitest 3 API. Multi-project config in Vitest 2 lives in a workspace file, and `--project <name>` resolves against it.
 
 ```ts
-import { defineConfig } from "vitest/config";
+import { defineWorkspace } from "vitest/config";
 
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        test: {
-          name: "unit",
-          include: ["tests/unit/**/*.test.ts"],
-          environment: "node",
-        },
-      },
-    ],
+export default defineWorkspace([
+  {
+    test: {
+      name: "unit",
+      include: ["tests/unit/**/*.test.ts"],
+      environment: "node",
+    },
   },
-});
+]);
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -425,7 +423,7 @@ Expected: PASS, 6 tests.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add vitest.config.ts tests/unit/halftone-math.test.ts src/studio/halftone.ts
+git add vitest.workspace.ts tests/unit/halftone-math.test.ts src/studio/halftone.ts
 git commit -m "test: cover halftone coverage math, export clamp and coverageFor"
 ```
 
@@ -1081,8 +1079,8 @@ git commit -m "feat: add signup and login screens"
 Deliverable: a signed-in user can upload an image; oversized, wrong-type, and over-quota uploads are refused server-side with named reasons.
 
 **Files:**
-- Modify: `worker/auth.ts`, `wrangler.toml`
-- Create: `tests/worker/uploads.test.ts`, and the `worker` project in `vitest.config.ts`
+- Modify: `worker/auth.ts`, `wrangler.toml`, `vitest.workspace.ts`
+- Create: `tests/worker/uploads.test.ts`
 
 **Interfaces:**
 - Consumes: `createAuth` from Task 5.
@@ -1153,37 +1151,35 @@ async function countUserArtwork(
 
 If the generated table name differs from `userFiles`, read `db/auth.schema.ts` and use the actual name. Do not guess.
 
-- [ ] **Step 3: Add the worker test project to `vitest.config.ts`**
+- [ ] **Step 3: Add the worker project to `vitest.workspace.ts`**
+
+Append the worker project to the existing workspace array created in Task 2. Do not convert this to `test.projects` — that option does not exist in the pinned Vitest 2.1.
 
 ```ts
 import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
-import { defineConfig } from "vitest/config";
+import { defineWorkspace } from "vitest/config";
 
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        test: {
-          name: "unit",
-          include: ["tests/unit/**/*.test.ts"],
-          environment: "node",
+export default defineWorkspace([
+  {
+    test: {
+      name: "unit",
+      include: ["tests/unit/**/*.test.ts"],
+      environment: "node",
+    },
+  },
+  defineWorkersProject({
+    test: {
+      name: "worker",
+      include: ["tests/worker/**/*.test.ts"],
+      poolOptions: {
+        workers: {
+          wrangler: { configPath: "./wrangler.toml" },
+          miniflare: { compatibilityFlags: ["nodejs_compat"] },
         },
       },
-      defineWorkersProject({
-        test: {
-          name: "worker",
-          include: ["tests/worker/**/*.test.ts"],
-          poolOptions: {
-            workers: {
-              wrangler: { configPath: "./wrangler.toml" },
-              miniflare: { compatibilityFlags: ["nodejs_compat"] },
-            },
-          },
-        },
-      }),
-    ],
-  },
-});
+    },
+  }),
+]);
 ```
 
 - [ ] **Step 4: Write the failing test**
