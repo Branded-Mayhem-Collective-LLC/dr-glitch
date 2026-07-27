@@ -331,7 +331,7 @@ falling back to Arial. Both families are OFL 1.1; licenses vendored."
 Deliverable: the whole design-system gate from Task 1 goes green. Largest diff in the plan, no behavior change.
 
 **Files:**
-- Modify: `src/styles/globals.css`
+- Modify: `src/styles/globals.css`, `tests/e2e/design-system.spec.ts`
 
 **Interfaces:**
 - Consumes: `--font-display` / `--font-ui` / `--font-mono` from Task 2.
@@ -432,6 +432,56 @@ grep -n "box-shadow" src/styles/globals.css
 - Section separators run **full-bleed to the container edge** — remove inset margins on `hr`, `.divider`, and any `border-top` used as a section rule. §5 calls this the brutalist signature.
 - Spacing steps snap to the 8px grid.
 
+- [ ] **Step 5b: Bind tabular figures to the mono face (§4)**
+
+§4 states all numerics use Martian Mono **with `font-variant-numeric: tabular-nums`**. The two travel together: a production tool needs figures that do not reflow as values change. Task 2 repointed the numeric rules onto `var(--font-mono)` but did not add the figure setting, and these three rules currently lack it:
+
+- `.range-label output`
+- `.angle-field input`
+- `.zoom-controls output`
+
+Add `font-variant-numeric: tabular-nums;` to each. Then verify no rule uses the mono face without it:
+
+```bash
+cd /Volumes/DriveB/Projects/halftone-web
+python3 - <<'CHECK'
+import re
+css = open("src/styles/globals.css").read()
+missing = [
+    sel.strip().splitlines()[-1].strip()
+    for sel, body in re.findall(r'([^{}]+)\{([^}]*)\}', css)
+    if "--font-mono" in body and "tabular-nums" not in body and not sel.strip().endswith(":root")
+]
+print("mono rules missing tabular-nums:", missing)
+assert not missing, missing
+CHECK
+```
+
+`:root` is excluded because it only defines the custom property; it does not apply the face.
+
+- [ ] **Step 5c: Add the tabular-figures assertion to the gate**
+
+So this cannot silently regress, append a test to `tests/e2e/design-system.spec.ts`:
+
+```ts
+  test("numeric readouts use tabular figures", async ({ page }) => {
+    // §4: Martian Mono and tabular-nums travel together. Figures that reflow
+    // as values change make a production readout hard to scan.
+    const offenders = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("output, input[inputmode='decimal']"))
+        .filter((el) => {
+          const s = getComputedStyle(el);
+          return (
+            s.fontFamily.includes("Martian") &&
+            !s.fontVariantNumeric.includes("tabular-nums")
+          );
+        })
+        .map((el) => `${el.tagName}.${el.className}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+```
+
 - [ ] **Step 6: Run the gate**
 
 Run: `npx playwright test design-system`
@@ -450,7 +500,7 @@ npm run build
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/styles/globals.css
+git add src/styles/globals.css tests/e2e/design-system.spec.ts
 git commit -m "feat: rewrite theme to the DR.GLITCH process-ink token system
 
 Removes orange entirely, zeroes all 31 radii, drops 6 gradients and every
