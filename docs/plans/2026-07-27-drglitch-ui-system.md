@@ -51,9 +51,9 @@ Every task's requirements implicitly include this section. Values copied verbati
 - Auth backend, workspaces, persistence.
 - Mobile layout. Desktop production tool; mobile gets a graceful "open on desktop" state, not a responsive port.
 
-**Naming gate (§2) — binding**
-- The product name is **not approved**. `DR.GLITCH` is a proposal pending Dave Clayton's written confirmation.
-- The wordmark string lives in exactly one constant. Dev/local renders the proposed lockup so it can be judged in situ; the public build keeps the current name until confirmation arrives.
+**Naming (§2) — RESOLVED 2026-07-27**
+- Michael approved `DR.GLITCH` for use everywhere. "DRC Halftone" was a placeholder from the Codex generation, not established branding.
+- The name still lives in exactly ONE constant (`src/brand.ts`) so it is never hardcoded in two places. Import it; do not retype the string.
 
 **Process**
 - Node `>=22.13.0`. Do not remove `LICENSE` (GPL-3.0).
@@ -462,7 +462,7 @@ shift perceived ink density."
 
 ### Task 4: Wordmark constant and brand quarantine
 
-Deliverable: the product name lives in exactly one place and cannot ship unapproved; the misregistration effect exists but is structurally barred from the stage.
+Deliverable: the product name lives in exactly one place; the misregistration effect exists but is structurally barred from the stage.
 
 **Files:**
 - Create: `src/brand.ts`
@@ -478,27 +478,18 @@ Deliverable: the product name lives in exactly one place and cannot ship unappro
 
 ```ts
 /**
- * Naming gate — spec §2 and §12.
+ * Single source of truth for the product name (spec §2, resolved 2026-07-27).
  *
- * DR.GLITCH is a PROPOSAL. The product currently ships as "DRC Halftone".
- * Renaming is Dave Clayton's decision, not ours, and §2 is explicit that
- * nothing ships under the proposed name without written confirmation.
+ * "DRC Halftone" was a placeholder emitted by the Codex generation, not
+ * established branding. DR.GLITCH is approved for use everywhere.
  *
- * Dev builds render the proposed lockup so it can be judged in situ.
- * Production keeps the current name until WORDMARK_APPROVED flips to true.
- *
- * To adopt the name after written confirmation: set WORDMARK_APPROVED = true.
- * That is the only edit required.
+ * Import PRODUCT_NAME. Never retype the string — a name in two places is a
+ * name that will disagree with itself.
  */
-export const WORDMARK_APPROVED = false;
+export const PRODUCT_NAME = "DR.GLITCH";
 
-const PROPOSED = "DR.GLITCH";
-const CURRENT = "DRC Halftone";
-
-export const PRODUCT_NAME =
-  WORDMARK_APPROVED || import.meta.env.DEV ? PROPOSED : CURRENT;
-
-export const WORDMARK = PRODUCT_NAME;
+/** Shown in the <title> and on auth screens. */
+export const PRODUCT_TAGLINE = "CMYK Separation Studio";
 ```
 
 - [ ] **Step 2: Add the quarantined misregistration effect**
@@ -568,32 +559,38 @@ In `src/styles/globals.css`:
 
 Read `globals.css` first to confirm the real class names for the stage and inspector containers, and use those actual names in the guard rather than the illustrative `.stage` / `.inspector` above. Report which selectors you used.
 
-- [ ] **Step 3: Fix the hardcoded title**
+- [ ] **Step 3: Update the hardcoded title**
 
-`index.html` hardcodes `<title>DRC Halftone — CMYK Studio</title>`. Leave the static title as the current approved name (it is the production default and cannot read `import.meta.env`), but add a comment above it pointing at `src/brand.ts` so the next person does not edit the name in two places.
+`index.html` hardcodes `<title>DRC Halftone — CMYK Studio</title>`. Change it to `<title>DR.GLITCH — CMYK Separation Studio</title>`, and add an HTML comment above it noting that the canonical name lives in `src/brand.ts` and both must move together. Static HTML cannot import the constant, so this is the one permitted duplicate — flag it rather than let it drift silently.
 
-- [ ] **Step 4: Verify the gate holds**
+Also update the `<meta name="description">` if it names the old product.
+
+- [ ] **Step 4: Verify the name is single-sourced**
 
 ```bash
 cd /Volumes/DriveB/Projects/halftone-web
 npm run build
-grep -rc "DR.GLITCH" dist/client/assets/*.js
+grep -rn "DRC Halftone" src/ index.html
 ```
 
-The production bundle may contain the string (it is in the ternary), but confirm by inspection that `WORDMARK_APPROVED` is `false` and `import.meta.env.DEV` is `false` in the production build, so `PRODUCT_NAME` evaluates to `DRC Halftone` at runtime.
+That grep must return NOTHING. Any remaining hit is a hardcoded old name. The only permitted literal `DR.GLITCH` occurrences in source are the one in `src/brand.ts` and the one in `index.html`'s `<title>`; everywhere else must import `PRODUCT_NAME`.
 
-Then run `npx playwright test design-system` — still all passing.
+```bash
+grep -rn "DR.GLITCH" src/ | grep -v "src/brand.ts"
+```
+
+That must also return nothing. Then run `npx playwright test design-system` — still all passing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/brand.ts src/styles/globals.css index.html
-git commit -m "feat: gate the product name behind a single constant
+git commit -m "feat: adopt DR.GLITCH as the product name, single-sourced
 
-DR.GLITCH is unapproved pending Dave Clayton's written confirmation (spec
-§2). Dev renders the proposed lockup for judgement; production keeps DRC
-Halftone. Adds the quarantined misregistration effect, structurally barred
-from the stage and inspector."
+Michael approved the name 2026-07-27; DRC Halftone was a Codex placeholder.
+PRODUCT_NAME lives in src/brand.ts and is imported everywhere. Adds the
+quarantined misregistration effect, structurally barred from the stage and
+inspector per spec section 8."
 ```
 
 ---
@@ -1916,7 +1913,7 @@ git commit -m "feat: add desktop-only state and satisfy the accessibility floor"
 
 ## Deliberately not built here
 
-**The name is not adopted.** `WORDMARK_APPROVED` stays `false`. Production renders `DRC Halftone`; dev renders the proposed lockup so it can be judged in situ. Flipping it is a one-line edit, gated on Dave Clayton's written confirmation per §2.
+**The name is adopted.** Michael approved `DR.GLITCH` on 2026-07-27; "DRC Halftone" was a Codex-generated placeholder. It is single-sourced in `src/brand.ts`. Dave Clayton should still see the lockup before any outbound announcement — that is a courtesy and a §2 formality, not a code gate.
 
 **The hazard-yellow exception is implemented as specified**, with §3's pure-achromatic fallback documented but not built. If Michael rejects hazard yellow, the change is confined to the `[role="alert"]` rule in Task 9 and any over-limit state.
 
