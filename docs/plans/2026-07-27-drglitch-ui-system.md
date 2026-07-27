@@ -19,7 +19,7 @@ Every task's requirements implicitly include this section. Values copied verbati
 - Plate inks, semantic and reserved: `--ink-c: #0093D0`, `--ink-m: #E6007E`, `--ink-y: #FFE800`, `--ink-k: #101010`. **No element may use these hues except to signify that channel.**
 - `#00FFFF` and screen-primary equivalents are **banned** — they read as RGB and undermine credibility with press people.
 - Chrome, achromatic: `--paper: #F4F1E9`, `--paper-2: #E9E5DA`, `--paper-3: #DDD8CB`, `--rule: #101010`, `--rule-soft: #B8B2A4`.
-- Stage, neutral and proof-safe: `--stage: #1C1D1F`, `--stage-2: #232426`, `--stage-rule: #34363A`. **Zero blue cast by design** — a blue-tinted surround shifts perceived ink density.
+- Stage, neutral and proof-safe: `--stage: #1D1D1D`, `--stage-2: #242424`, `--stage-rule: #363636`. True neutrals (R=G=B). **Zero blue cast by design** — a blue-tinted surround shifts perceived ink density.
 - Hazard is the single declared exception: over-ink-limit, out-of-gamut, and destructive actions render `--ink-k` on `--ink-y`. Success states carry **no color at all** — a filled black mark only.
 
 **Geometry (§5)**
@@ -360,9 +360,9 @@ The current block defines `--orange`, `--orange-soft`, `--shell`, `--panel`, `--
   --rule-soft: #B8B2A4;
 
   /* Stage — neutral, proof-safe. Zero blue cast by design (§3). */
-  --stage: #1C1D1F;
-  --stage-2: #232426;
-  --stage-rule: #34363A;
+  --stage: #1D1D1D;
+  --stage-2: #242424;
+  --stage-rule: #363636;
 
   /* Legacy aliases, retained so existing rules resolve. Migrate opportunistically. */
   --shell: var(--stage);
