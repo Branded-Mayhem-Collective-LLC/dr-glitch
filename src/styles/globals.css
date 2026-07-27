@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "Archivo";
+  src: url("/fonts/archivo-variable.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Martian Mono";
+  src: url("/fonts/martian-mono-variable.woff2") format("woff2-variations");
+  font-weight: 300 800;
+  font-stretch: 75% 112.5%;
+  font-display: swap;
+}
+
 @import "tailwindcss";
 
 :root {
@@ -11,7 +27,9 @@
   --panel-2: #272a2e;
   --line: #373a3f;
   --paper: #eee9de;
-  --font-ui: var(--font-geist-sans), "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Archivo", sans-serif;
+  --font-ui: "Archivo", sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, monospace;
 }
 
 * {
@@ -461,7 +479,7 @@ select:focus-visible {
   background: #2a2d31;
   color: #d2d0ca;
   text-align: right;
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
 }
 
@@ -549,7 +567,7 @@ input[type="range"]::-webkit-slider-thumb {
   outline: 0;
   background: transparent;
   color: #e0ded8;
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -777,7 +795,7 @@ input[type="range"]::-webkit-slider-thumb {
 .zoom-controls output {
   width: 32px;
   color: #979a96;
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   text-align: right;
 }
