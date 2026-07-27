@@ -20,9 +20,26 @@ test.describe("DR.GLITCH design system", () => {
   test("no element uses a banned hue", async ({ page }) => {
     const offenders = await page.evaluate((banned) => {
       const found: string[] = [];
+      // Full paint surface: text/background/all four border edges/outline,
+      // SVG fill+stroke (icons), and boxShadow's own color component — a
+      // hardcoded orange fill or a zero-blur orange box-shadow is just as
+      // much a banned-hue violation as a text color, and neither would be
+      // caught by the original 4-property list.
+      const props = [
+        "color",
+        "backgroundColor",
+        "borderTopColor",
+        "borderRightColor",
+        "borderBottomColor",
+        "borderLeftColor",
+        "outlineColor",
+        "fill",
+        "stroke",
+        "boxShadow",
+      ];
       for (const el of Array.from(document.querySelectorAll("*"))) {
         const s = getComputedStyle(el);
-        for (const prop of ["color", "backgroundColor", "borderTopColor", "outlineColor"]) {
+        for (const prop of props) {
           const v = s[prop as keyof CSSStyleDeclaration] as string;
           if (typeof v !== "string") continue;
           for (const hue of banned) {
@@ -37,41 +54,111 @@ test.describe("DR.GLITCH design system", () => {
   });
 
   test("every element has zero border radius", async ({ page }) => {
-    const rounded = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("*"))
-        .filter((el) => {
-          const r = getComputedStyle(el).borderRadius;
-          return r !== "" && r !== "0px" && !r.startsWith("0px 0px 0px 0px");
-        })
-        .map((el) => `${el.tagName}.${el.className}: ${getComputedStyle(el).borderRadius}`),
-    );
+    // querySelectorAll("*") cannot see ::before/::after — the spec's
+    // "hairline crop/registration ticks at panel corners" (§5) are likely
+    // implemented as pseudo-elements, so a rounded corner there would be
+    // invisible without an explicit pseudo-element sweep.
+    const rounded = await page.evaluate(() => {
+      const found: string[] = [];
+      const check = (el: Element, pseudo?: "::before" | "::after") => {
+        const s = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
+        if (pseudo && s.content === "none") return; // pseudo-element doesn't render
+        const r = s.borderRadius;
+        if (r !== "" && r !== "0px" && !r.startsWith("0px 0px 0px 0px")) {
+          found.push(`${el.tagName}.${el.className}${pseudo ?? ""}: ${r}`);
+        }
+      };
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        check(el);
+        check(el, "::before");
+        check(el, "::after");
+      }
+      return found;
+    });
 
     expect(rounded).toEqual([]);
   });
 
   test("no gradient backgrounds", async ({ page }) => {
-    const gradients = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("*"))
-        .filter((el) => getComputedStyle(el).backgroundImage.includes("gradient"))
-        .map((el) => `${el.tagName}.${el.className}`),
-    );
+    // Same pseudo-element blind spot as the radius test — a decorative
+    // gradient on a ::before is just as much a violation as one on the
+    // element itself, and is cheap to add here.
+    const gradients = await page.evaluate(() => {
+      const found: string[] = [];
+      const check = (el: Element, pseudo?: "::before" | "::after") => {
+        const s = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
+        if (pseudo && s.content === "none") return;
+        if (s.backgroundImage.includes("gradient")) {
+          found.push(`${el.tagName}.${el.className}${pseudo ?? ""}`);
+        }
+      };
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        check(el);
+        check(el, "::before");
+        check(el, "::after");
+      }
+      return found;
+    });
 
     expect(gradients).toEqual([]);
   });
 
   test("no blurred shadows; offsets only", async ({ page }) => {
-    const blurred = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("*"))
-        .map((el) => ({ el, shadow: getComputedStyle(el).boxShadow }))
-        .filter(({ shadow }) => {
-          if (!shadow || shadow === "none") return false;
-          // computed form: "rgb(r, g, b) Xpx Ypx BLURpx SPREADpx"
-          const nums = shadow.match(/-?\d+(\.\d+)?px/g) ?? [];
+    const blurred = await page.evaluate(() => {
+      // Chromium's computed boxShadow is a comma-separated list of shadows,
+      // e.g. "rgba(0, 0, 0, .35) 0px 2px 4px 0px, rgba(0, 0, 0, .44) 0px 25px 60px 0px".
+      // Flattening every px number across the WHOLE string and reading
+      // index [2] only works for a single shadow — with two shadows it
+      // silently reads the first shadow's blur and can miss blur hiding in
+      // the second (or later) one. Split on top-level commas first (commas
+      // inside rgb()/rgba() parens must NOT split), then check each
+      // shadow's own blur independently.
+      const splitShadows = (shadow: string): string[] => {
+        const parts: string[] = [];
+        let depth = 0;
+        let current = "";
+        for (const ch of shadow) {
+          if (ch === "(") depth++;
+          else if (ch === ")") depth--;
+          if (ch === "," && depth === 0) {
+            parts.push(current.trim());
+            current = "";
+          } else {
+            current += ch;
+          }
+        }
+        if (current.trim()) parts.push(current.trim());
+        return parts;
+      };
+
+      const hasBlur = (shadow: string): boolean => {
+        if (!shadow || shadow === "none") return false;
+        return splitShadows(shadow).some((single) => {
+          // Per-shadow computed form: "rgb(r, g, b) Xpx Ypx BLURpx SPREADpx"
+          // (optionally with a trailing "inset" token, which is not a px
+          // value and doesn't shift the numeric positions).
+          const nums = single.match(/-?\d+(\.\d+)?px/g) ?? [];
           const blur = nums[2] ? parseFloat(nums[2]) : 0;
           return blur > 0;
-        })
-        .map(({ el, shadow }) => `${el.tagName}.${el.className}: ${shadow}`),
-    );
+        });
+      };
+
+      const found: string[] = [];
+      const check = (el: Element, pseudo?: "::before" | "::after") => {
+        const s = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
+        if (pseudo && s.content === "none") return;
+        const shadow = s.boxShadow;
+        if (hasBlur(shadow)) {
+          found.push(`${el.tagName}.${el.className}${pseudo ?? ""}: ${shadow}`);
+        }
+      };
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        check(el);
+        check(el, "::before");
+        check(el, "::after");
+      }
+      return found;
+    });
 
     expect(blurred).toEqual([]);
   });
