@@ -420,7 +420,7 @@ export function coverageFor(
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `npx vitest run --project unit`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -588,7 +588,7 @@ export function parseSettings(input: unknown): ParseResult {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run --project unit`
-Expected: PASS, 13 tests total across both unit files.
+Expected: PASS, 14 tests total across both unit files.
 
 - [ ] **Step 5: Commit**
 
