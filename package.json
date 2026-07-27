@@ -1,44 +1,48 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "halftone-web",
   "version": "0.1.0",
   "private": true,
-  "engines": {
-    "node": ">=22.13.0"
-  },
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run --project unit",
+    "test:worker": "vitest run --project worker",
+    "test:e2e": "playwright test",
+    "lint": "eslint src worker db --ignore-pattern dist",
+    "db:generate": "drizzle-kit generate",
+    "auth:schema": "better-auth-cli generate --config ./worker/auth.ts --output ./db/auth.schema.ts"
   },
   "dependencies": {
+    "better-auth": "^1.3.0",
+    "better-auth-cloudflare": "^0.3.1",
     "drizzle-orm": "0.45.2",
+    "hono": "^4.6.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.27.0",
-    "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "react-loading-skeleton": "3.5.0"
+    "react-router": "^7.1.0"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
-    "@tailwindcss/postcss": "4.2.1",
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.20250726.0",
+    "@playwright/test": "^1.49.0",
+    "@tailwindcss/vite": "4.2.2",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
-    "react-server-dom-webpack": "19.2.6",
-    "tailwindcss": "4.2.1",
+    "tailwindcss": "4.2.2",
     "typescript": "5.9.3",
-    "vinext": "0.0.50",
     "vite": "8.0.13",
+    "vitest": "^2.1.0",
     "wrangler": "4.92.0"
-  },
-  "type": "module"
+  }
 }

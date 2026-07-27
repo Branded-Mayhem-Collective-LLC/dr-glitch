@@ -27,7 +27,7 @@ import {
   PLATES,
   Plate,
   renderHalftone,
-} from "../../lib/halftone";
+} from "./halftone";
 import {
   ChangeEvent,
   DragEvent,
