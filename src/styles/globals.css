@@ -103,11 +103,60 @@
   transition: transform 120ms steps(3, end);
 }
 
-/* §9: reduced motion disables the register-snap entirely. */
+/*
+ * ALLOWLIST, not denylist. A denylist ("hide it near the stage/inspector")
+ * only stays correct if every future forbidden surface is added by hand —
+ * and HalftoneStudio.tsx already has a third top-level region (.topbar, with
+ * live controls: Open artwork, Export, .export-menu) that a denylist keyed
+ * on stage/inspector alone would miss entirely. Section 8 names exactly six
+ * PERMITTED surfaces, which is the smaller, closed set — so the effect is
+ * OFF by default and only re-enabled inside those six. A surface that is
+ * never explicitly allowed can never accidentally glitch, no matter where
+ * a future author drops class="glitch". Do not "simplify" this back into a
+ * denylist — that reintroduces the exact hole this replaced.
+ *
+ * Real container classes, confirmed by reading HalftoneStudio.tsx / Login.tsx
+ * / Signup.tsx / globals.css (2026-07-27):
+ *   1. Wordmark lockup  — EXISTS: .brand-lockup (studio topbar + both auth
+ *                          screens)
+ *   2. Auth screens      — EXISTS: .auth-card (Login.tsx, Signup.tsx — wraps
+ *                          the brand lockup, form, and switch-link on both
+ *                          screens)
+ *   3. Empty states       — RESERVED, no container built yet. (.drop-overlay
+ *                          is the drag-over overlay, not an empty state, and
+ *                          it renders on top of .canvas-stage — in sight of
+ *                          the proof — so it must NOT be added here.)
+ *   4. Export sheet header — RESERVED. .export-menu exists (the dropdown
+ *                          itself) but has no header/title sub-element today.
+ *   5. Toasts             — EXISTS: .toast (HalftoneStudio.tsx notice banner)
+ *   6. Splash             — RESERVED, no splash screen built yet.
+ * Whoever builds a reserved surface adds its real class name to the
+ * allowlist below — don't invent markup here to pre-fill it.
+ */
+.glitch::before,
+.glitch::after {
+  display: none;
+}
+
+.brand-lockup .glitch::before,
+.brand-lockup .glitch::after,
+.auth-card .glitch::before,
+.auth-card .glitch::after,
+.toast .glitch::before,
+.toast .glitch::after {
+  display: block;
+}
+
+/*
+ * §9: reduced motion disables the register-snap entirely. This must win
+ * over the allowlist re-enable above even on permitted surfaces, so it is
+ * !important rather than relying on selector specificity (the allowlist
+ * selectors above are already more specific than a bare .glitch::before).
+ */
 @media (prefers-reduced-motion: reduce) {
   .glitch::before,
   .glitch::after {
-    display: none;
+    display: none !important;
   }
   .glitch:hover::before,
   .glitch:focus-visible::before,
@@ -115,23 +164,6 @@
   .glitch:focus-visible::after {
     transition: none;
   }
-}
-
-/*
- * Structural guard: the effect cannot render inside the proof stage or the
- * control panel, even if a future author mistakenly adds .glitch there.
- * Real container class names, confirmed in src/studio/HalftoneStudio.tsx:
- *   - .canvas-stage  — the <section> holding the live CMYK preview canvas
- *   - .inspector     — the <aside> holding all live controls (upload, screen,
- *                       plate angles, output toggles)
- * (The brief's illustrative .stage / .inspector selectors do not match this
- * codebase; .canvas-stage is the real proof-stage container.)
- */
-.canvas-stage .glitch::before,
-.canvas-stage .glitch::after,
-.inspector .glitch::before,
-.inspector .glitch::after {
-  display: none;
 }
 
 * {
