@@ -4,8 +4,6 @@ import {
   Check,
   ChevronDown,
   Download,
-  Eye,
-  EyeOff,
   FileImage,
   FolderOpen,
   HelpCircle,
@@ -23,6 +21,7 @@ import JSZip from "jszip";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import InkRail from "./InkRail";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
+import NumericField from "./NumericField";
 import {
   createDemoArtwork,
   HalftoneSettings,
@@ -52,44 +51,6 @@ const DEFAULT_SETTINGS: HalftoneSettings = {
   angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 },
   visible: { cyan: true, magenta: true, yellow: true, black: true },
 };
-
-function RangeControl({
-  label,
-  value,
-  min,
-  max,
-  step,
-  suffix,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="range-control">
-      <span className="range-label">
-        <span>{label}</span>
-        <output>
-          {Number.isInteger(value) ? value : value.toFixed(2)}
-          {suffix}
-        </output>
-      </span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </label>
-  );
-}
 
 function StepHeader({
   number,
@@ -187,6 +148,16 @@ export default function HalftoneStudio() {
       setSettings((current) => ({
         ...current,
         visible: { ...current.visible, [plate]: !current.visible[plate] },
+      }));
+    },
+    [],
+  );
+
+  const handleAngleChange = useCallback(
+    (plate: Exclude<Plate, "composite">, angle: number) => {
+      setSettings((current) => ({
+        ...current,
+        angles: { ...current.angles, [plate]: angle },
       }));
     },
     [],
@@ -420,82 +391,48 @@ export default function HalftoneStudio() {
                   <option value="line">Line</option>
                 </select>
               </label>
-              <RangeControl
+              <NumericField
+                id="cellSize"
                 label="Cell size"
                 value={settings.cellSize}
-                min={5}
-                max={28}
+                min={3}
+                max={64}
                 step={1}
-                suffix=" px"
+                unit="px"
+                hint="At 240 DPI, 16 px yields about 15 LPI; 4 px yields about 60 LPI."
                 onChange={(value) => updateSetting("cellSize", value)}
               />
-              <RangeControl
+              <NumericField
+                id="contrast"
                 label="Contrast"
                 value={settings.contrast}
                 min={0.5}
                 max={2}
                 step={0.05}
-                suffix="×"
+                unit="×"
+                hint="Expands or compresses the tonal range before dots are built."
                 onChange={(value) => updateSetting("contrast", value)}
               />
-              <RangeControl
+              <NumericField
+                id="exposure"
                 label="Exposure"
-                value={settings.exposure}
-                min={-0.3}
-                max={0.3}
-                step={0.01}
-                onChange={(value) => updateSetting("exposure", value)}
+                value={Math.round(settings.exposure * 100)}
+                min={-30}
+                max={30}
+                step={1}
+                unit="%"
+                hint="Shifts overall coverage toward more ink or more paper."
+                onChange={(value) => updateSetting("exposure", value / 100)}
               />
             </div>
           </section>
 
           <section className="control-step">
-            <StepHeader number="3" title="Plate angles" />
-            <div className="plate-list">
-              {PLATES.map((plate) => {
-                const meta = PLATE_META[plate];
-                return (
-                  <div className="plate-row" key={plate}>
-                    <button
-                      className="visibility-button"
-                      title={`${settings.visible[plate] ? "Hide" : "Show"} ${meta.label}`}
-                      aria-label={`${settings.visible[plate] ? "Hide" : "Show"} ${meta.label}`}
-                      onClick={() =>
-                        updateSetting("visible", {
-                          ...settings.visible,
-                          [plate]: !settings.visible[plate],
-                        })
-                      }
-                    >
-                      {settings.visible[plate] ? <Eye size={15} /> : <EyeOff size={15} />}
-                    </button>
-                    <span
-                      className="plate-swatch"
-                      style={{ background: meta.color }}
-                      aria-hidden="true"
-                    >
-                      {meta.short}
-                    </span>
-                    <span className="plate-name">{meta.label}</span>
-                    <label className="angle-field">
-                      <input
-                        type="number"
-                        min={0}
-                        max={90}
-                        value={settings.angles[plate]}
-                        onChange={(event) =>
-                          updateSetting("angles", {
-                            ...settings.angles,
-                            [plate]: Number(event.target.value),
-                          })
-                        }
-                      />
-                      <span>°</span>
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
+            <StepHeader number="3" title="Separation" />
+            <p className="control-note">
+              Set each 0–359° screen angle in the persistent plate rail beside
+              the proof.
+            </p>
           </section>
 
           <section className="control-step final-step">
@@ -522,13 +459,16 @@ export default function HalftoneStudio() {
                 onChange={(event) => updateSetting("invert", event.target.checked)}
               />
             </label>
-            <RangeControl
+            <NumericField
+              id="opacity"
               label="Ink density"
-              value={settings.opacity}
-              min={0.35}
-              max={1}
-              step={0.01}
-              onChange={(value) => updateSetting("opacity", value)}
+              value={Math.round(settings.opacity * 100)}
+              min={35}
+              max={100}
+              step={1}
+              unit="%"
+              hint="Changes the opacity of every plate in the composite proof."
+              onChange={(value) => updateSetting("opacity", value / 100)}
             />
           </section>
         </aside>
@@ -561,6 +501,7 @@ export default function HalftoneStudio() {
               settings={settings}
               onSolo={handleSolo}
               onToggleVisible={handleToggleVisible}
+              onAngleChange={handleAngleChange}
             />
 
             <div className="canvas-scroll">
@@ -601,13 +542,27 @@ export default function HalftoneStudio() {
               >
                 <ZoomOut size={17} />
               </button>
+              <NumericField
+                id="zoom"
+                label="Zoom"
+                value={zoom}
+                min={35}
+                max={110}
+                step={1}
+                unit="%"
+                hint="Changes only the proof view, never the exported artwork."
+                onChange={setZoom}
+              />
               <input
                 type="range"
+                data-testid="zoom-slider"
                 min={35}
                 max={110}
                 value={zoom}
                 onChange={(event) => setZoom(Number(event.target.value))}
                 aria-label="Preview zoom"
+                aria-valuetext={`${zoom} percent`}
+                aria-describedby="numeric-zoom-unit numeric-zoom-hint"
               />
               <button
                 className="icon-button"
@@ -617,7 +572,6 @@ export default function HalftoneStudio() {
               >
                 <ZoomIn size={17} />
               </button>
-              <output>{zoom}%</output>
             </div>
           </div>
 

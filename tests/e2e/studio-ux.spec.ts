@@ -79,6 +79,18 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
       expect(outline.style).not.toBe("none");
       expect(outline.width).toBeGreaterThan(0);
 
+      if (plate !== "composite") {
+        await page.keyboard.press("Tab");
+        const angle = page.getByTestId(`ink-angle-${plate}`);
+        await expect(angle).toBeFocused();
+        const angleOutline = await angle.evaluate((el) => {
+          const s = getComputedStyle(el);
+          return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+        });
+        expect(angleOutline.style).not.toBe("none");
+        expect(angleOutline.width).toBeGreaterThan(0);
+      }
+
       if (index < order.length - 1) await page.keyboard.press("Tab");
     }
   });
@@ -193,5 +205,165 @@ test.describe("channel tinting", () => {
     await page.getByTestId("ink-chip-composite").click();
     // §6.2: composite presents all four as a hairline stripe, not one hue.
     expect((await activeInk(page)).toLowerCase()).toBe("#101010");
+  });
+});
+
+test.describe("typed numerics", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+  });
+
+  test("cell size accepts a typed value", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    await field.fill("18");
+    await field.press("Enter");
+    await expect(field).toHaveValue("18");
+  });
+
+  test("units are rendered, not implied", async ({ page }) => {
+    await expect(page.getByTestId("numeric-cellSize-unit")).toContainText("px");
+  });
+
+  test("out-of-range input is clamped, not accepted blindly", async ({
+    page,
+  }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    await field.fill("9999");
+    await field.press("Enter");
+    const value = Number(await field.inputValue());
+    expect(value).toBeLessThanOrEqual(64);
+  });
+
+  test("a non-numeric entry reverts rather than breaking the render", async ({
+    page,
+  }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const before = await field.inputValue();
+    await field.fill("abc");
+    await field.press("Enter");
+    await expect(field).toHaveValue(before);
+    await expect(page.locator("canvas").first()).toBeVisible();
+  });
+
+  test("empty and whitespace-only numeric drafts revert", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const before = await field.inputValue();
+
+    await field.fill("");
+    await field.press("Enter");
+    await expect(field).toHaveValue(before);
+
+    await field.fill("   ");
+    await field.press("Enter");
+    await expect(field).toHaveValue(before);
+  });
+
+  test("numeric rows meet the 24px hit-target floor", async ({ page }) => {
+    const box = await page.getByTestId("numeric-cellSize").boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+  });
+
+  test("the draggable numeric label meets the 24px hit-target floor", async ({
+    page,
+  }) => {
+    const box = await page.getByTestId("numeric-cellSize-grip").boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+  });
+
+  test("numeric labels support coarse drag and Shift fine-adjust", async ({
+    page,
+  }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const grip = page.getByTestId("numeric-cellSize-grip");
+    const box = await grip.boundingBox();
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 8, y);
+    await page.mouse.up();
+    await expect(field).toHaveValue("20");
+
+    await field.fill("12");
+    await field.press("Enter");
+    await page.keyboard.down("Shift");
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 8, y);
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+    await expect(field).toHaveValue("14");
+  });
+
+  test("numeric units and consequence hints are announced with the field", async ({
+    page,
+  }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    await expect(field).toHaveAttribute(
+      "aria-describedby",
+      "numeric-cellSize-unit numeric-cellSize-hint",
+    );
+    await expect(page.locator("#numeric-cellSize-unit")).toContainText("px");
+    await expect(page.locator("#numeric-cellSize-hint")).toContainText(/240 DPI/i);
+  });
+
+  test("the ink rail is the only plate-angle editor", async ({ page }) => {
+    await expect(page.getByTestId("ink-angle-cyan")).toHaveCount(1);
+    await expect(page.locator(".inspector .angle-field")).toHaveCount(0);
+  });
+
+  test("plate angles are typed or dragged inline without changing the soloed plate", async ({
+    page,
+  }) => {
+    await page.getByTestId("ink-chip-composite").click();
+    const angle = page.getByTestId("ink-angle-cyan");
+    await angle.fill("-1");
+    await angle.press("Enter");
+    await expect(angle).toHaveValue("359");
+
+    const grip = page.getByTestId("ink-angle-cyan-grip");
+    const box = await grip.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+    await grip.hover();
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width / 2 + 6, box!.y + box!.height / 2);
+    await page.mouse.up();
+    await expect(angle).not.toHaveValue("359");
+
+    await expect(page.getByTestId("ink-chip-composite")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("empty and whitespace-only angle drafts revert", async ({ page }) => {
+    const angle = page.getByTestId("ink-angle-cyan");
+    const before = await angle.inputValue();
+
+    await angle.fill("");
+    await angle.press("Enter");
+    await expect(angle).toHaveValue(before);
+
+    await angle.fill("   ");
+    await angle.press("Enter");
+    await expect(angle).toHaveValue(before);
+  });
+
+  test("zoom is type-first while retaining a slider for drag adjustment", async ({
+    page,
+  }) => {
+    const zoom = page.getByTestId("numeric-zoom");
+    await zoom.fill("90");
+    await zoom.press("Enter");
+    await expect(zoom).toHaveValue("90");
+    const slider = page.getByTestId("zoom-slider");
+    await expect(slider).toBeVisible();
+    await expect(slider).toHaveAttribute("aria-valuetext", "90 percent");
+    await expect(slider).toHaveAttribute(
+      "aria-describedby",
+      "numeric-zoom-unit numeric-zoom-hint",
+    );
   });
 });

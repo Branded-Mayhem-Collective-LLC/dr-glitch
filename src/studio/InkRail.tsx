@@ -5,13 +5,117 @@ import {
   type HalftoneSettings,
   type Plate,
 } from "./halftone";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
+
+type ProcessPlate = Exclude<Plate, "composite">;
 
 type Props = {
   activePlate: Plate;
   settings: HalftoneSettings;
   onSolo: (plate: Plate) => void;
-  onToggleVisible: (plate: Exclude<Plate, "composite">) => void;
+  onToggleVisible: (plate: ProcessPlate) => void;
+  onAngleChange: (plate: ProcessPlate, angle: number) => void;
 };
+
+function normalizeAngle(value: number) {
+  return ((value % 360) + 360) % 360;
+}
+
+function InlineAngleField({
+  plate,
+  label,
+  value,
+  onChange,
+}: {
+  plate: ProcessPlate;
+  label: string;
+  value: number;
+  onChange: (plate: ProcessPlate, angle: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const dragState = useRef<{ startX: number; startValue: number } | null>(null);
+  const unitId = `ink-angle-${plate}-unit`;
+  const hintId = `ink-angle-${plate}-hint`;
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  function commit() {
+    if (draft.trim() === "") {
+      setDraft(String(value));
+      return;
+    }
+
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const next = normalizeAngle(parsed);
+    setDraft(String(next));
+    onChange(plate, next);
+  }
+
+  function onPointerDown(event: PointerEvent<HTMLSpanElement>) {
+    dragState.current = { startX: event.clientX, startValue: value };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event: PointerEvent<HTMLSpanElement>) {
+    const state = dragState.current;
+    if (!state) return;
+    const delta = event.clientX - state.startX;
+    const scale = event.shiftKey ? 0.25 : 1;
+    onChange(plate, normalizeAngle(state.startValue + delta * scale));
+  }
+
+  function onPointerUp(event: PointerEvent<HTMLSpanElement>) {
+    dragState.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  return (
+    <div className="ink-chip-angle-field">
+      <span
+        className="ink-chip-angle-grip"
+        data-testid={`ink-angle-${plate}-grip`}
+        title={`Drag to adjust ${label} angle`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        aria-hidden="true"
+      >
+        ↔
+      </span>
+      <input
+        className="ink-chip-angle-input"
+        data-testid={`ink-angle-${plate}`}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape") setDraft(String(value));
+        }}
+        aria-label={`${label} screen angle in degrees`}
+        aria-describedby={`${unitId} ${hintId}`}
+      />
+      <span id={unitId}>°</span>
+      <span id={hintId} className="sr-only">
+        Sets screen rotation from 0 through 359 degrees. Drag the adjacent
+        handle for rough adjustment.
+      </span>
+    </div>
+  );
+}
 
 /**
  * §6.1 Ink rail. Persistent, always-visible C/M/Y/K + composite strip.
@@ -48,18 +152,16 @@ type Props = {
  * language") gives sighted keyboard-only users — who see neither title nor
  * aria-label — the same discoverability.
  *
- * Markup note (Task 5 ambiguity, resolved): chips render as a single
- * <button> per §9's requirement that letter + angle live together in one
- * text-queryable element. Task 7 (editable angle) cannot nest an <input>
- * inside this <button> — it will need to restructure each chip into a row
- * (e.g. a wrapping <div> holding this button for the solo/letter target
- * plus a sibling <input> for the angle) rather than add the input here.
+ * The editable angle is a sibling of the solo button, never nested inside
+ * it. A visually hidden angle in the button keeps plate identity intact for
+ * the button's text fallback while the adjacent input is the visible editor.
  */
 export default function InkRail({
   activePlate,
   settings,
   onSolo,
   onToggleVisible,
+  onAngleChange,
 }: Props) {
   return (
     <div className="ink-rail" role="group" aria-label="Plates">
@@ -95,43 +197,44 @@ export default function InkRail({
           visible ? "visible" : "hidden"
         }. Enter to solo. Alt+Enter to ${visible ? "hide" : "show"}.`;
         return (
-          <button
-            key={plate}
-            type="button"
-            data-testid={`ink-chip-${plate}`}
-            className={`ink-chip ${activePlate === plate ? "is-active" : ""}`}
-            aria-pressed={activePlate === plate}
-            aria-label={ariaLabel}
-            data-visible={visible ? "true" : "false"}
-            title={`${meta.label} — click to solo, Alt-click (or focus + Alt+Enter) to hide${isHiddenAndActive ? " (currently hidden — plate renders blank)" : ""}`}
-            onClick={(event) => {
-              if (event.altKey || event.metaKey) {
-                onToggleVisible(plate);
-                return;
-              }
-              onSolo(plate);
-            }}
-            onKeyDown={(event) => {
-              // Alt+Enter: Chromium never synthesizes a click here (holding
-              // Alt suppresses the default Enter-activates-button behavior
-              // outright), so this is a direct intercept, not a fallback for
-              // a flaky native path. preventDefault to stop any browser
-              // chrome (e.g. a stray form submit) from reacting to the
-              // Enter keydown once we've handled it ourselves.
-              if (event.altKey && event.key === "Enter") {
-                event.preventDefault();
-                onToggleVisible(plate);
-              }
-            }}
-          >
-            <span
-              className="ink-chip-swatch"
-              style={{ background: CHROME_INK[plate] }}
-              aria-hidden="true"
+          <div className="ink-chip-row" key={plate}>
+            <button
+              type="button"
+              data-testid={`ink-chip-${plate}`}
+              className={`ink-chip ${activePlate === plate ? "is-active" : ""}`}
+              aria-pressed={activePlate === plate}
+              aria-label={ariaLabel}
+              data-visible={visible ? "true" : "false"}
+              title={`${meta.label} — click to solo, Alt-click (or focus + Alt+Enter) to hide${isHiddenAndActive ? " (currently hidden — plate renders blank)" : ""}`}
+              onClick={(event) => {
+                if (event.altKey || event.metaKey) {
+                  onToggleVisible(plate);
+                  return;
+                }
+                onSolo(plate);
+              }}
+              onKeyDown={(event) => {
+                if (event.altKey && event.key === "Enter") {
+                  event.preventDefault();
+                  onToggleVisible(plate);
+                }
+              }}
+            >
+              <span
+                className="ink-chip-swatch"
+                style={{ background: CHROME_INK[plate] }}
+                aria-hidden="true"
+              />
+              <span className="ink-chip-letter">{meta.short}</span>
+              <span className="sr-only">{angle} degrees</span>
+            </button>
+            <InlineAngleField
+              plate={plate}
+              label={meta.label}
+              value={angle}
+              onChange={onAngleChange}
             />
-            <span className="ink-chip-letter">{meta.short}</span>
-            <span className="ink-chip-angle">{angle}°</span>
-          </button>
+          </div>
         );
       })}
 
