@@ -18,6 +18,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import JSZip from "jszip";
+import SessionBadge from "../auth/SessionBadge";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import InkRail from "./InkRail";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
@@ -716,6 +717,8 @@ export default function HalftoneStudio() {
           </button>
         </div>
       )}
+
+      <SessionBadge />
     </main>
   );
 }

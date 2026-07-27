@@ -3,9 +3,10 @@ import { Link } from "react-router";
 import authClient from "./client";
 
 /**
- * Small fixed-position overlay showing who is signed in. Rendered alongside
- * the studio, never inside it (HalftoneStudio.tsx is out of scope for this
- * task). Signed-out visitors see a "Sign in" link; the studio itself is
+ * Small fixed-position overlay showing who is signed in. Intentionally
+ * rendered inside the studio root so its focus treatment inherits the active
+ * plate ink. It remains fully registered — no glitch effect is permitted this
+ * close to the proof. Signed-out visitors see a "Sign in" link; the studio is
  * fully usable either way.
  */
 export default function SessionBadge() {
@@ -25,8 +26,13 @@ export default function SessionBadge() {
 
   if (!data?.user) {
     return (
-      <div className="session-badge">
-        <Link className="session-badge-action" to="/login">
+      <div className="session-badge" data-testid="session-badge">
+        <span className="session-badge-label">Guest proof</span>
+        <Link
+          className="session-badge-action"
+          data-testid="session-badge-action"
+          to="/login"
+        >
           Sign in
         </Link>
       </div>
@@ -34,11 +40,16 @@ export default function SessionBadge() {
   }
 
   return (
-    <div className="session-badge">
+    <div className="session-badge" data-testid="session-badge">
       <span className="session-badge-email" title={data.user.email}>
         {data.user.email}
       </span>
-      <button className="session-badge-action" onClick={handleSignOut} disabled={signingOut}>
+      <button
+        className="session-badge-action"
+        data-testid="session-badge-action"
+        onClick={handleSignOut}
+        disabled={signingOut}
+      >
         {signingOut ? "Signing out…" : "Sign out"}
       </button>
     </div>

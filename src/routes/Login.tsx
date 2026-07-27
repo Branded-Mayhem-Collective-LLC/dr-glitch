@@ -33,22 +33,19 @@ export default function Login() {
 
   return (
     <div className="auth-shell">
-      <div className="auth-card">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-            <span />
+      <main className="auth-card" aria-labelledby="login-title">
+        <header className="auth-header">
+          <p className="auth-kicker">Four plates. One proof.</p>
+          <h1 className="auth-wordmark glitch" data-text={PRODUCT_NAME}>
+            {PRODUCT_NAME}
+          </h1>
+          <p className="auth-product-line">{PRODUCT_TAGLINE}</p>
+        </header>
+        <form onSubmit={onSubmit} className="auth-form" aria-busy={busy}>
+          <div className="auth-form-heading">
+            <h2 id="login-title">Sign in</h2>
+            <p className="auth-subtitle">Return to the separation desk.</p>
           </div>
-          <div>
-            <strong>{PRODUCT_NAME}</strong>
-            <span>{PRODUCT_TAGLINE}</span>
-          </div>
-        </div>
-        <form onSubmit={onSubmit} className="auth-form">
-          <h1>Sign in</h1>
-          <p className="auth-subtitle">Welcome back.</p>
           <label>
             Email
             <input
@@ -77,7 +74,7 @@ export default function Login() {
         <p className="auth-switch">
           Need an account? <Link to="/signup">Create one</Link>
         </p>
-      </div>
+      </main>
     </div>
   );
 }

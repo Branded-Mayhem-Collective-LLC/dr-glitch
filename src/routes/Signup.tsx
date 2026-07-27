@@ -43,22 +43,19 @@ export default function Signup() {
 
   return (
     <div className="auth-shell">
-      <div className="auth-card">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-            <span />
+      <main className="auth-card" aria-labelledby="signup-title">
+        <header className="auth-header">
+          <p className="auth-kicker">Four plates. One proof.</p>
+          <h1 className="auth-wordmark glitch" data-text={PRODUCT_NAME}>
+            {PRODUCT_NAME}
+          </h1>
+          <p className="auth-product-line">{PRODUCT_TAGLINE}</p>
+        </header>
+        <form onSubmit={onSubmit} className="auth-form" aria-busy={busy}>
+          <div className="auth-form-heading">
+            <h2 id="signup-title">Create an account</h2>
+            <p className="auth-subtitle">Save projects and pick up where you left off.</p>
           </div>
-          <div>
-            <strong>{PRODUCT_NAME}</strong>
-            <span>{PRODUCT_TAGLINE}</span>
-          </div>
-        </div>
-        <form onSubmit={onSubmit} className="auth-form">
-          <h1>Create an account</h1>
-          <p className="auth-subtitle">Save projects and pick up where you left off.</p>
           <label>
             Email
             <input
@@ -69,17 +66,23 @@ export default function Signup() {
               autoComplete="email"
             />
           </label>
-          <label>
-            Password
-            <input
-              type="password"
-              required
-              minLength={12}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
+          <div>
+            <label>
+              Password
+              <input
+                type="password"
+                required
+                minLength={12}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                aria-describedby="password-requirement"
+              />
+            </label>
+            <p className="auth-field-hint" id="password-requirement">
+              12 characters minimum
+            </p>
+          </div>
           {error ? <p role="alert">{error}</p> : null}
           <button type="submit" disabled={busy}>
             {busy ? "Creating account" : "Create account"}
@@ -88,7 +91,7 @@ export default function Signup() {
         <p className="auth-switch">
           Already have an account? <Link to="/login">Sign in</Link>
         </p>
-      </div>
+      </main>
     </div>
   );
 }
