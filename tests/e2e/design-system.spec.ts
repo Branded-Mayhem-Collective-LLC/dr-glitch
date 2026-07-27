@@ -198,4 +198,21 @@ test.describe("DR.GLITCH design system", () => {
     expect(loaded.fontFaceCount).toBeGreaterThan(0);
     expect(loaded.brokenFontVar).toBe(false);
   });
+
+  test("numeric readouts use tabular figures", async ({ page }) => {
+    // §4: Martian Mono and tabular-nums travel together. Figures that reflow
+    // as values change make a production readout hard to scan.
+    const offenders = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("output, input[inputmode='decimal']"))
+        .filter((el) => {
+          const s = getComputedStyle(el);
+          return (
+            s.fontFamily.includes("Martian") &&
+            !s.fontVariantNumeric.includes("tabular-nums")
+          );
+        })
+        .map((el) => `${el.tagName}.${el.className}`),
+    );
+    expect(offenders).toEqual([]);
+  });
 });
