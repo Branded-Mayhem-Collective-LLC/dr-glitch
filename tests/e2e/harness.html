@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <body>
+    <canvas id="target"></canvas>
+    <script type="module">
+      import {
+        createDemoArtwork,
+        renderHalftone,
+        PLATES,
+      } from "/src/studio/halftone.ts";
+
+      const settings = {
+        cellSize: 12,
+        contrast: 1,
+        exposure: 0,
+        opacity: 0.84,
+        dotShape: "round",
+        invert: false,
+        angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 },
+        visible: { cyan: true, magenta: true, yellow: true, black: true },
+      };
+
+      window.renderAll = () => {
+        const source = createDemoArtwork();
+        const target = document.getElementById("target");
+        const out = {};
+        for (const plate of ["composite", ...PLATES]) {
+          renderHalftone(source, target, settings, {
+            plate,
+            width: 320,
+            height: 320,
+            registration: false,
+          });
+          out[plate] = target.toDataURL("image/png");
+        }
+        return out;
+      };
+    </script>
+  </body>
+</html>
