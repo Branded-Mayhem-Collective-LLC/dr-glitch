@@ -1,5 +1,26 @@
 import { expect, test } from "@playwright/test";
 
+function contrastRatio(foreground: string, background: string) {
+  function luminance(color: string) {
+    const channels = color
+      .match(/\d+(?:\.\d+)?/g)!
+      .slice(0, 3)
+      .map((channel) => Number(channel) / 255)
+      .map((channel) =>
+        channel <= 0.04045
+          ? channel / 12.92
+          : ((channel + 0.055) / 1.055) ** 2.4,
+      );
+    return (
+      channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+    );
+  }
+
+  const light = Math.max(luminance(foreground), luminance(background));
+  const dark = Math.min(luminance(foreground), luminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
+
 test.describe("ink rail", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
@@ -365,5 +386,167 @@ test.describe("typed numerics", () => {
       "aria-describedby",
       "numeric-zoom-unit numeric-zoom-hint",
     );
+  });
+});
+
+test.describe("stage spine and keyboard", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+  });
+
+  test("all four stages are visible without scrolling", async ({ page }) => {
+    for (const label of ["ARTWORK", "SCREEN", "SEPARATION", "OUTPUT"]) {
+      await expect(
+        page.getByTestId(`stage-${label.toLowerCase()}`),
+      ).toBeInViewport();
+    }
+  });
+
+  test("stage numbers are zero-padded and completion is explicit", async ({
+    page,
+  }) => {
+    await expect(page.getByTestId("stage-artwork")).toContainText("01");
+    await expect(page.getByTestId("stage-output")).toContainText("04");
+    await expect(page.getByTestId("stage-artwork")).toHaveAttribute(
+      "data-complete",
+      "true",
+    );
+    await expect(
+      page.getByTestId("stage-artwork").getByLabel("complete"),
+    ).toBeVisible();
+  });
+
+  test("every stage name is fully visible without clipping", async ({
+    page,
+  }) => {
+    for (const [id, label] of [
+      ["artwork", "ARTWORK"],
+      ["screen", "SCREEN"],
+      ["separation", "SEPARATION"],
+      ["output", "OUTPUT"],
+    ]) {
+      const measurements = await page.getByTestId(`stage-${id}`).evaluate(
+        (button, expectedLabel) => {
+          const name = button.querySelector<HTMLElement>(".stage-label")!;
+          return {
+            text: name.textContent?.trim(),
+            buttonFits: button.scrollWidth <= button.clientWidth,
+            labelFits: name.scrollWidth <= name.clientWidth,
+            expectedLabel,
+          };
+        },
+        label,
+      );
+
+      expect(measurements.text?.toUpperCase()).toBe(measurements.expectedLabel);
+      expect(measurements.buttonFits).toBe(true);
+      expect(measurements.labelFits).toBe(true);
+    }
+  });
+
+  test("inactive stage labels meet WCAG AA contrast", async ({ page }) => {
+    const colors = await page.getByTestId("stage-screen").evaluate((button) => {
+      const label = button.querySelector<HTMLElement>(".stage-label")!;
+      const spine = button.closest<HTMLElement>(".stage-spine")!;
+      return {
+        foreground: getComputedStyle(label).color,
+        background: getComputedStyle(spine).backgroundColor,
+      };
+    });
+
+    expect(contrastRatio(colors.foreground, colors.background)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+  });
+
+  test("clicking a stage jumps to its inspector section", async ({ page }) => {
+    await page.getByTestId("stage-output").click();
+    await expect(page.locator("#output")).toBeInViewport();
+  });
+
+  test("Space activates a focused stage control without arming pan", async ({
+    page,
+  }) => {
+    const stage = page.getByTestId("stage-surface");
+    const output = page.getByTestId("stage-output");
+    await output.focus();
+    await page.keyboard.press("Space");
+
+    await expect(output).toHaveAttribute("aria-current", "step");
+    await expect(page.locator("#output")).toBeInViewport();
+    await expect(stage).toHaveAttribute("data-pan-armed", "false");
+  });
+
+  test("number keys solo plates", async ({ page }) => {
+    await page.locator("body").press("1");
+    await expect(page.getByTestId("active-plate-label")).toContainText(/cyan/i);
+    await page.locator("body").press("2");
+    await expect(page.getByTestId("active-plate-label")).toContainText(
+      /magenta/i,
+    );
+    await page.locator("body").press("4");
+    await expect(page.getByTestId("active-plate-label")).toContainText(/black/i);
+  });
+
+  test("backtick returns to composite", async ({ page }) => {
+    await page.locator("body").press("1");
+    await page.locator("body").press("`");
+    await expect(page.getByTestId("active-plate-label")).toContainText(
+      /composite/i,
+    );
+  });
+
+  test("bracket keys step cell size", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const before = Number(await field.inputValue());
+    await page.locator("body").press("]");
+    await expect(field).toHaveValue(String(before + 1));
+    await page.locator("body").press("[");
+    await expect(field).toHaveValue(String(before));
+  });
+
+  test("shortcuts do not fire while typing in a field", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    await field.click();
+    await field.fill("");
+    await field.type("12");
+    // '1' and '2' must reach the input, not solo plates.
+    await expect(field).toHaveValue("12");
+    await expect(page.getByTestId("active-plate-label")).toContainText(
+      /composite/i,
+    );
+  });
+
+  test("space arms panning and dragging moves the proof", async ({ page }) => {
+    const stage = page.getByTestId("stage-surface");
+    const artboard = page.locator(".artboard-wrap");
+    const before = await artboard.evaluate((element) => element.style.transform);
+
+    await page.keyboard.down("Space");
+    await expect(stage).toHaveAttribute("data-pan-armed", "true");
+
+    const box = await stage.boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      box!.x + box!.width / 2 + 36,
+      box!.y + box!.height / 2 + 24,
+    );
+    await page.mouse.up();
+
+    const after = await artboard.evaluate((element) => element.style.transform);
+    expect(after).not.toBe(before);
+
+    await page.keyboard.up("Space");
+    await expect(stage).toHaveAttribute("data-pan-armed", "false");
+  });
+
+  test("space does not arm panning while typing", async ({ page }) => {
+    const stage = page.getByTestId("stage-surface");
+    await page.getByTestId("numeric-cellSize").click();
+    await page.keyboard.down("Space");
+    await expect(stage).toHaveAttribute("data-pan-armed", "false");
+    await page.keyboard.up("Space");
   });
 });

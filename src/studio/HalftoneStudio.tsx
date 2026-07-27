@@ -22,6 +22,8 @@ import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import InkRail from "./InkRail";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
 import NumericField from "./NumericField";
+import StageSpine, { type Stage } from "./StageSpine";
+import { isInteractiveTarget, useStudioKeys } from "./useStudioKeys";
 import {
   createDemoArtwork,
   HalftoneSettings,
@@ -52,25 +54,6 @@ const DEFAULT_SETTINGS: HalftoneSettings = {
   visible: { cyan: true, magenta: true, yellow: true, black: true },
 };
 
-function StepHeader({
-  number,
-  title,
-  complete,
-}: {
-  number: string;
-  title: string;
-  complete?: boolean;
-}) {
-  return (
-    <div className="step-header">
-      <span className={`step-number ${complete ? "complete" : ""}`}>
-        {complete ? <Check size={13} /> : number}
-      </span>
-      <span>{title}</span>
-    </div>
-  );
-}
-
 export default function HalftoneStudio() {
   const [source, setSource] = useState<HTMLImageElement | HTMLCanvasElement | null>(
     null,
@@ -79,6 +62,10 @@ export default function HalftoneStudio() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [activePlate, setActivePlate] = useState<Plate>("composite");
   const [zoom, setZoom] = useState(76);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [panning, setPanning] = useState(false);
+  const [activeStage, setActiveStage] = useState("artwork");
   const [registration, setRegistration] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -87,6 +74,12 @@ export default function HalftoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const renderFrame = useRef<number | null>(null);
+  const panStart = useRef<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setSource(createDemoArtwork()), 0);
@@ -141,6 +134,47 @@ export default function HalftoneStudio() {
 
   const handleSolo = useCallback((plate: Plate) => {
     setActivePlate(plate);
+  }, []);
+
+  const handleCellSizeDelta = useCallback((delta: number) => {
+    setSettings((current) => ({
+      ...current,
+      cellSize: Math.min(64, Math.max(3, current.cellSize + delta)),
+    }));
+  }, []);
+
+  useStudioKeys({
+    onSolo: handleSolo,
+    onCellSizeDelta: handleCellSizeDelta,
+  });
+
+  useEffect(() => {
+    function down(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat) return;
+      if (isInteractiveTarget(event.target)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      setSpaceHeld(true);
+    }
+
+    function up(event: KeyboardEvent) {
+      if (event.code === "Space") setSpaceHeld(false);
+    }
+
+    function reset() {
+      setSpaceHeld(false);
+      setPanning(false);
+      panStart.current = null;
+    }
+
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", reset);
+    };
   }, []);
 
   const handleToggleVisible = useCallback(
@@ -278,6 +312,41 @@ export default function HalftoneStudio() {
   const activeInk =
     activePlate === "composite" ? COMPOSITE_INK : CHROME_INK[activePlate];
 
+  const stages: Stage[] = [
+    {
+      id: "artwork",
+      number: "01",
+      label: "Artwork",
+      complete: Boolean(source),
+    },
+    {
+      id: "screen",
+      number: "02",
+      label: "Screen",
+      complete: false,
+    },
+    {
+      id: "separation",
+      number: "03",
+      label: "Separation",
+      complete: false,
+    },
+    {
+      id: "output",
+      number: "04",
+      label: "Output",
+      complete: false,
+    },
+  ];
+
+  function jumpToStage(id: string) {
+    setActiveStage(id);
+    document.getElementById(id)?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
+  }
+
   return (
     <main
       className="studio-shell"
@@ -347,6 +416,11 @@ export default function HalftoneStudio() {
 
       <section className="workspace">
         <aside className="inspector">
+          <StageSpine
+            stages={stages}
+            active={activeStage}
+            onJump={jumpToStage}
+          />
           <div className="inspector-heading">
             <div>
               <span className="eyebrow">Recipe</span>
@@ -357,8 +431,7 @@ export default function HalftoneStudio() {
             </button>
           </div>
 
-          <section className="control-step">
-            <StepHeader number="1" title="Artwork" complete={Boolean(source)} />
+          <section className="control-step" id="artwork">
             <button className="upload-card" onClick={() => fileRef.current?.click()}>
               <span className="upload-icon">
                 <ImagePlus size={20} />
@@ -371,8 +444,7 @@ export default function HalftoneStudio() {
             </button>
           </section>
 
-          <section className="control-step">
-            <StepHeader number="2" title="Screen" />
+          <section className="control-step" id="screen">
             <div className="field-grid">
               <label className="select-field">
                 <span>Dot shape</span>
@@ -427,16 +499,14 @@ export default function HalftoneStudio() {
             </div>
           </section>
 
-          <section className="control-step">
-            <StepHeader number="3" title="Separation" />
+          <section className="control-step" id="separation">
             <p className="control-note">
               Set each 0–359° screen angle in the persistent plate rail beside
               the proof.
             </p>
           </section>
 
-          <section className="control-step final-step">
-            <StepHeader number="4" title="Output" />
+          <section className="control-step final-step" id="output">
             <label className="toggle-row">
               <span>
                 <strong>Registration marks</strong>
@@ -474,7 +544,16 @@ export default function HalftoneStudio() {
         </aside>
 
         <section
-          className={`canvas-stage ${dragging ? "dragging" : ""}`}
+          className={[
+            "canvas-stage",
+            dragging ? "dragging" : "",
+            spaceHeld ? "pan-armed" : "",
+            panning ? "panning" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          data-testid="stage-surface"
+          data-pan-armed={spaceHeld ? "true" : "false"}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragging(true);
@@ -484,6 +563,38 @@ export default function HalftoneStudio() {
             if (event.currentTarget === event.target) setDragging(false);
           }}
           onDrop={onDrop}
+          onPointerDown={(event) => {
+            if (!spaceHeld || event.button !== 0) return;
+            event.preventDefault();
+            panStart.current = {
+              x: event.clientX,
+              y: event.clientY,
+              panX: pan.x,
+              panY: pan.y,
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setPanning(true);
+          }}
+          onPointerMove={(event) => {
+            const start = panStart.current;
+            if (!start) return;
+            setPan({
+              x: start.panX + event.clientX - start.x,
+              y: start.panY + event.clientY - start.y,
+            });
+          }}
+          onPointerUp={(event) => {
+            if (!panStart.current) return;
+            panStart.current = null;
+            setPanning(false);
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          }}
+          onPointerCancel={() => {
+            panStart.current = null;
+            setPanning(false);
+          }}
         >
           <div className="stage-toolbar">
             <span className="active-plate-label" data-testid="active-plate-label">
@@ -507,7 +618,10 @@ export default function HalftoneStudio() {
             <div className="canvas-scroll">
               <div
                 className="artboard-wrap"
-                style={{ width: `${zoom}%` }}
+                style={{
+                  width: `${zoom}%`,
+                  transform: `translate3d(${pan.x}px, ${pan.y}px, 0)`,
+                }}
                 onDoubleClick={() => setZoom(76)}
               >
                 <canvas ref={canvasRef} aria-label="Live CMYK halftone preview" />
