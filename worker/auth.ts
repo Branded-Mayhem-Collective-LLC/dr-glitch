@@ -64,8 +64,3 @@ export function createAuth(
         }),
   });
 }
-
-// CLI-only instance: `@better-auth/cli generate` requires the config module
-// to export an `auth` instance (or default export), not a factory. Never
-// used at runtime — see `createAuth` above for the per-request instance.
-export const auth = createAuth();
