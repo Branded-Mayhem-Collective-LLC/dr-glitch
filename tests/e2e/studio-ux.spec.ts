@@ -387,6 +387,19 @@ test.describe("typed numerics", () => {
       "numeric-zoom-unit numeric-zoom-hint",
     );
   });
+
+  test("zoom controls meet their chrome and dense-control target floors", async ({
+    page,
+  }) => {
+    for (const name of ["Zoom out", "Zoom in"]) {
+      const box = await page.getByRole("button", { name }).boundingBox();
+      expect(box!.width).toBeGreaterThanOrEqual(32);
+      expect(box!.height).toBeGreaterThanOrEqual(32);
+    }
+
+    const sliderBox = await page.getByTestId("zoom-slider").boundingBox();
+    expect(sliderBox!.height).toBeGreaterThanOrEqual(24);
+  });
 });
 
 test.describe("stage spine and keyboard", () => {

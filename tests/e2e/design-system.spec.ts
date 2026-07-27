@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 /**
  * Design-system gate for docs/specs/2026-07-27-drglitch-ui-system-design.md.
@@ -10,6 +12,267 @@ const BANNED_HUES = [
   "255, 138, 84",  // --orange-soft   #ff8a54
   "0, 255, 255",   // screen cyan     #00FFFF, banned by §3
 ];
+
+const DECLARED_COLORS = new Set([
+  "0,147,208",   // process cyan
+  "230,0,126",   // process magenta
+  "255,232,0",   // process yellow
+  "16,16,16",    // process black / rule
+  "244,241,233", // paper
+  "233,229,218", // paper-2
+  "221,216,203", // paper-3
+  "184,178,164", // rule-soft
+  "29,29,29",    // stage
+  "36,36,36",    // stage-2
+  "54,54,54",    // stage-rule
+]);
+
+async function auditComputedPaint(page: Page): Promise<string[]> {
+  return page.evaluate((declared) => {
+    const permitted = new Set(declared);
+    const properties = [
+      "color",
+      "backgroundColor",
+      "borderTopColor",
+      "borderRightColor",
+      "borderBottomColor",
+      "borderLeftColor",
+      "outlineColor",
+      "fill",
+      "stroke",
+      "boxShadow",
+    ] as const;
+    const colorFunctions = new Set([
+      "rgb",
+      "rgba",
+      "hsl",
+      "hsla",
+      "hwb",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
+      "color",
+      "color-mix",
+    ]);
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true })!;
+    const out: string[] = [];
+
+    const normalize = (candidate: string, currentColor: string) => {
+      const value =
+        candidate.trim().toLowerCase() === "currentcolor"
+          ? currentColor
+          : candidate.trim();
+      if (!CSS.supports("color", value)) return null;
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      return Array.from(context.getImageData(0, 0, 1, 1).data);
+    };
+
+    const auditColor = (
+      candidate: string,
+      label: string,
+      currentColor: string,
+    ) => {
+      const rgba = normalize(candidate, currentColor);
+      if (!rgba) {
+        out.push(`${label}=UNNORMALIZABLE(${candidate})`);
+        return;
+      }
+      const [red, green, blue, alpha] = rgba;
+      if (alpha === 0) return;
+      if (alpha !== 255 || !permitted.has(`${red},${green},${blue}`)) {
+        out.push(`${label}=${candidate} -> rgba(${rgba.join(",")})`);
+      }
+    };
+
+    const splitTopLevel = (value: string) => {
+      const parts: string[] = [];
+      let depth = 0;
+      let current = "";
+      for (const character of value) {
+        if (character === "(") depth++;
+        if (character === ")") depth--;
+        if (character === "," && depth === 0) {
+          parts.push(current.trim());
+          current = "";
+        } else {
+          current += character;
+        }
+      }
+      if (current.trim()) parts.push(current.trim());
+      return parts;
+    };
+
+    const extractFunctions = (value: string) => {
+      const colors: string[] = [];
+      let residue = "";
+      for (let index = 0; index < value.length; ) {
+        const match = value.slice(index).match(/^([a-z-]+)\(/i);
+        if (!match || !colorFunctions.has(match[1].toLowerCase())) {
+          residue += value[index];
+          index++;
+          continue;
+        }
+        let depth = 0;
+        let end = index;
+        for (; end < value.length; end++) {
+          if (value[end] === "(") depth++;
+          if (value[end] === ")") {
+            depth--;
+            if (depth === 0) {
+              end++;
+              break;
+            }
+          }
+        }
+        colors.push(value.slice(index, end));
+        residue += " ";
+        index = end;
+      }
+      return { colors, residue };
+    };
+
+    const auditShadow = (
+      value: string,
+      label: string,
+      currentColor: string,
+    ) => {
+      for (const shadow of splitTopLevel(value)) {
+        const extracted = extractFunctions(shadow);
+        let residue = extracted.residue;
+        const candidates = [...extracted.colors];
+        for (const match of residue.matchAll(/#[0-9a-f]{3,8}\b/gi)) {
+          candidates.push(match[0]);
+        }
+        residue = residue.replace(/#[0-9a-f]{3,8}\b/gi, " ");
+        residue = residue
+          .replace(/-?\d*\.?\d+(?:px|em|rem|%)?/gi, " ")
+          .replace(/\binset\b/gi, " ")
+          .replace(/,/g, " ")
+          .trim();
+        if (residue) candidates.push(residue);
+        if (candidates.length === 0) {
+          out.push(`${label}=UNNORMALIZABLE(${shadow})`);
+          continue;
+        }
+        for (const candidate of candidates) {
+          auditColor(candidate, label, currentColor);
+        }
+      }
+    };
+
+    const check = (
+      element: Element,
+      pseudo?: "::before" | "::after",
+    ) => {
+      const styles = getComputedStyle(element, pseudo);
+      if (pseudo && styles.content === "none") return;
+      for (const property of properties) {
+        if (
+          (property === "fill" || property === "stroke") &&
+          !(element instanceof SVGElement)
+        ) {
+          continue;
+        }
+        const value = styles[property];
+        if (!value || value === "none" || value === "transparent") continue;
+        const label = `${element.tagName}.${element.className}${pseudo ?? ""} ${property}`;
+        if (property === "boxShadow") {
+          auditShadow(value, label, styles.color);
+        } else {
+          auditColor(value, label, styles.color);
+        }
+      }
+    };
+
+    for (const element of Array.from(document.querySelectorAll("*"))) {
+      check(element);
+      check(element, "::before");
+      check(element, "::after");
+    }
+    return out;
+  }, [...DECLARED_COLORS]);
+}
+
+async function auditStylesheetSource(
+  page: Page,
+  css: string,
+): Promise<string[]> {
+  return page.evaluate(
+    ({ source, declared }) => {
+      const permitted = new Set(declared);
+      const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
+      const decoded = withoutComments.replace(/%[0-9a-f]{2}/gi, (escape) =>
+        String.fromCharCode(Number.parseInt(escape.slice(1), 16)),
+      );
+      const out: string[] = [];
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true })!;
+      const allowedKeywords = new Set(["transparent", "currentcolor", "none"]);
+
+      const auditColor = (candidate: string, label: string) => {
+        const value = candidate.trim();
+        if (allowedKeywords.has(value.toLowerCase())) return;
+        if (!CSS.supports("color", value)) return;
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = value;
+        context.fillRect(0, 0, 1, 1);
+        const [red, green, blue, alpha] = Array.from(
+          context.getImageData(0, 0, 1, 1).data,
+        );
+        if (alpha === 0) return;
+        if (alpha !== 255 || !permitted.has(`${red},${green},${blue}`)) {
+          out.push(`${label}=${value}`);
+        }
+      };
+
+      for (const match of decoded.matchAll(
+        /\b(?:oklch|oklab|lab|lch|hsl|hsla|hwb|color|color-mix)\s*\([^;}]*/gi,
+      )) {
+        out.push(`modern-color=${match[0].trim()}`);
+      }
+
+      for (const match of decoded.matchAll(/#[0-9a-f]{3,8}\b/gi)) {
+        auditColor(match[0], "literal");
+      }
+      for (const match of decoded.matchAll(
+        /rgba?\(\s*[^)]*\)/gi,
+      )) {
+        auditColor(match[0], "literal");
+      }
+
+      for (const match of decoded.matchAll(
+        /\b(?:fill|stroke)\s*=\s*(['"]?)([^'"\s>]+)/gi,
+      )) {
+        auditColor(match[2], "data-svg");
+      }
+
+      const paintDeclaration =
+        /(?:^|[;{])\s*((?:background(?:-color|-image)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|outline(?:-color)?|box-shadow|color|fill|stroke))\s*:\s*([^;}]+)/gim;
+      for (const match of decoded.matchAll(paintDeclaration)) {
+        const property = match[1];
+        const value = match[2]
+          .replace(/var\([^)]*\)/gi, " ")
+          .replace(/url\([^)]*\)/gi, " ")
+          .replace(/#[0-9a-f]{3,8}\b/gi, " ")
+          .replace(/[a-z-]+\([^)]*\)/gi, " ");
+        for (const token of value.matchAll(/\b[a-z][a-z-]*\b/gi)) {
+          auditColor(token[0], property);
+        }
+      }
+
+      return [...new Set(out)];
+    },
+    { source: css, declared: [...DECLARED_COLORS] },
+  );
+}
 
 test.describe("DR.GLITCH design system", () => {
   test.beforeEach(async ({ page }) => {
@@ -51,6 +314,71 @@ test.describe("DR.GLITCH design system", () => {
     }, BANNED_HUES);
 
     expect(offenders).toEqual([]);
+  });
+
+  test("chrome uses only exact declared process, paper, and stage colors", async ({
+    page,
+  }) => {
+    const offenders: string[] = [];
+    for (const route of ["/", "/login", "/signup"]) {
+      await page.goto(route);
+      if (route === "/") await page.waitForSelector("canvas");
+      const routeOffenders = await auditComputedPaint(page);
+      offenders.push(...routeOffenders.map((entry) => `${route} ${entry}`));
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("globals.css contains no undeclared color literal, including encoded data SVGs", async ({
+    page,
+  }) => {
+    const css = await readFile(
+      resolve(process.cwd(), "src/styles/globals.css"),
+      "utf8",
+    );
+    const offenders = await auditStylesheetSource(page, css);
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("palette auditors reject modern runtime colors and named encoded SVG colors", async ({
+    page,
+  }) => {
+    const supportsOklch = await page.evaluate(() =>
+      CSS.supports("box-shadow", "0 0 0 1px oklch(70% 0.2 30)"),
+    );
+    expect(supportsOklch).toBe(true);
+    await page.evaluate(() => {
+      const mutation = document.createElement("div");
+      mutation.className = "mutation-modern-color";
+      mutation.style.boxShadow = "0 0 0 1px oklch(70% 0.2 30)";
+      document.body.appendChild(mutation);
+    });
+    const runtimeOffenders = await auditComputedPaint(page);
+    expect(
+      runtimeOffenders.some(
+        (entry) =>
+          entry.includes("mutation-modern-color") &&
+          entry.includes("boxShadow"),
+      ),
+    ).toBe(true);
+
+    const encodedNamedColor =
+      `.modern{box-shadow:0 0 0 1px oklch(70% 0.2 30);}` +
+      `.fixture{background-image:url("data:image/svg+xml,` +
+      `%3Csvg xmlns='http://www.w3.org/2000/svg'%3E` +
+      `%3Cpath fill='red' d='M0 0h1v1z'/%3E%3C/svg%3E");}`;
+    const sourceOffenders = await auditStylesheetSource(
+      page,
+      encodedNamedColor,
+    );
+    expect(sourceOffenders.some((entry) => entry.includes("data-svg=red"))).toBe(
+      true,
+    );
+    expect(
+      sourceOffenders.some((entry) => entry.includes("modern-color=oklch")),
+    ).toBe(true);
   });
 
   test("every element has zero border radius", async ({ page }) => {
@@ -215,4 +543,155 @@ test.describe("DR.GLITCH design system", () => {
     );
     expect(offenders).toEqual([]);
   });
+});
+
+test.describe("accessibility floor and mobile", () => {
+  test("mobile guard removes the studio from visual, keyboard, and accessibility navigation", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    const guard = page.getByTestId("desktop-only");
+    await expect(guard).toBeVisible();
+
+    const underlying = page.locator(
+      ".studio-shell > :not(.desktop-only) button, " +
+        ".studio-shell > :not(.desktop-only) input, " +
+        ".studio-shell > :not(.desktop-only) select, " +
+        ".studio-shell > :not(.desktop-only) a[href], " +
+        ".studio-shell > :not(.desktop-only) [tabindex]",
+    );
+    expect(await underlying.count()).toBeGreaterThan(0);
+    for (const control of await underlying.all()) {
+      await expect(control).toBeHidden();
+    }
+
+    await page.keyboard.press("Tab");
+    const focusEscaped = await page.evaluate(() => {
+      const active = document.activeElement;
+      const guardElement = document.querySelector("[data-testid='desktop-only']");
+      return Boolean(
+        active &&
+          active !== document.body &&
+          active !== document.documentElement &&
+          !guardElement?.contains(active),
+      );
+    });
+    expect(focusEscaped).toBe(false);
+  });
+
+  test("yellow never carries text", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+    const violations = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        const s = getComputedStyle(el);
+        const isYellowText =
+          s.color.replace(/\s/g, "") === "rgb(255,232,0)" &&
+          (el.textContent ?? "").trim().length > 0;
+        if (isYellowText) out.push(`${el.tagName}.${el.className}`);
+      }
+      return out;
+    });
+    expect(violations).toEqual([]);
+  });
+
+  test("reduced motion suppresses the glitch even on permitted surfaces", async ({
+    page,
+  }) => {
+    // §9: prefers-reduced-motion disables the register-snap ENTIRELY.
+    // The allowlist's `display: block` on permitted surfaces has higher
+    // specificity than the reduced-motion rule, so the latter carries
+    // !important. Without it, the wordmark would keep glitching for users
+    // who asked it not to. This test pins that cascade.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+    const state = await page.evaluate(() => {
+      const el = document.querySelector(
+        ".brand-lockup strong",
+      ) as HTMLElement | null;
+      if (!el) return null;
+      el.classList.add("glitch");
+      el.setAttribute("data-text", "X");
+      const result = {
+        before: getComputedStyle(el, "::before").display,
+        after: getComputedStyle(el, "::after").display,
+      };
+      el.classList.remove("glitch");
+      el.removeAttribute("data-text");
+      return result;
+    });
+    expect(state).not.toBeNull();
+    expect(state!.before).toBe("none");
+    expect(state!.after).toBe("none");
+  });
+
+  for (const route of ["/", "/login", "/signup"]) {
+    test(`${route} gives every visible enabled interactive control a visible focus indicator`, async ({
+      page,
+    }) => {
+      await page.goto(route);
+      if (route === "/") await page.waitForSelector("canvas");
+
+      const controls = page.locator(
+        "button, input:not([type='hidden']), select, textarea, a[href], " +
+          "[tabindex]:not([tabindex='-1'])",
+      );
+      const offenders: string[] = [];
+
+      for (const control of await controls.all()) {
+        if (!(await control.isVisible()) || !(await control.isEnabled())) continue;
+        // Enter keyboard modality before focusing a specific control so
+        // Chromium applies :focus-visible rather than the pointer heuristic.
+        await page.keyboard.press("Tab");
+        await control.focus();
+        const state = await control.evaluate((element) => {
+          const styles = getComputedStyle(element);
+          const studio = Boolean(element.closest("[data-studio-root]"));
+          return {
+            identity:
+              element.getAttribute("aria-label") ||
+              element.getAttribute("name") ||
+              element.textContent?.trim() ||
+              `${element.tagName}.${element.className}`,
+            studio,
+            outlineColor: styles.outlineColor,
+            outlineStyle: styles.outlineStyle,
+            outlineWidth: Number.parseFloat(styles.outlineWidth),
+            boxShadow: styles.boxShadow,
+            activeInk: (() => {
+              if (!studio) return "";
+              const root = element.closest("[data-studio-root]") as HTMLElement;
+              const probe = document.createElement("span");
+              probe.style.color = getComputedStyle(root)
+                .getPropertyValue("--ink-active")
+                .trim();
+              root.appendChild(probe);
+              const resolved = getComputedStyle(probe).color;
+              probe.remove();
+              return resolved;
+            })(),
+          };
+        });
+        const visible =
+          (state.outlineStyle !== "none" && state.outlineWidth >= 2) ||
+          state.boxShadow !== "none";
+        const studioLaw =
+          !state.studio ||
+          (state.outlineColor === state.activeInk &&
+            state.boxShadow.includes(
+              "rgb(16, 16, 16) 0px 0px 0px 1px inset",
+            ));
+        if (!visible || !studioLaw) {
+          offenders.push(
+            `${state.identity}: outline=${state.outlineStyle} ${state.outlineWidth}px ${state.outlineColor}; shadow=${state.boxShadow}`,
+          );
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+  }
 });

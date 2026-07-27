@@ -99,7 +99,7 @@ export default function HalftoneStudio() {
       plate: activePlate,
       width: sourceWidth * scale,
       height: sourceHeight * scale,
-      paper: "#eee9de",
+      paper: "#F4F1E9",
       registration,
       monochromePlate: true,
     });
@@ -699,6 +699,14 @@ export default function HalftoneStudio() {
           )}
         </section>
       </section>
+
+      <div className="desktop-only" data-testid="desktop-only">
+        <p className="desktop-only-title">Open on a desktop</p>
+        <p className="desktop-only-body">
+          {PRODUCT_NAME} drives press separations at full resolution and needs a
+          pointer and a large canvas. Open this on a desktop browser.
+        </p>
+      </div>
 
       <input
         ref={fileRef}

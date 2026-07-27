@@ -44,13 +44,10 @@
   --panel-2: var(--stage-2);
   --line: var(--stage-rule);
   --fg: var(--paper);
-  /* --muted/--faint: true R=G=B neutrals (§3 "no tinted greys"). --muted
-     (#9b9b9b) already cleared WCAG AA (4.5:1) against both stage grounds
-     unlifted. --faint was lifted from #707070 (2.9:1) to #8c8c8c to clear
-     4.5:1 against --stage-2, the harder of the two grounds — see contrast
-     table in task-3-report.md. */
-  --muted: #9b9b9b;
-  --faint: #8c8c8c;
+  /* Secondary text still uses an exact declared token. --rule-soft clears
+     WCAG AA against both stage grounds without inventing another grey. */
+  --muted: var(--rule-soft);
+  --faint: var(--rule-soft);
 
   --font-display: "Archivo", sans-serif;
   --font-ui: "Archivo", sans-serif;
@@ -207,15 +204,51 @@ select:focus-visible {
   background: var(--shell);
 }
 
+.desktop-only {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .studio-shell > :not(.desktop-only) {
+    display: none !important;
+  }
+
+  .desktop-only {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    background: var(--paper);
+    color: var(--ink-k);
+  }
+
+  .desktop-only-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+  }
+
+  .desktop-only-body {
+    max-width: 40ch;
+    margin: 0;
+    font-size: 14px;
+  }
+}
+
 .topbar {
   height: 64px;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) auto;
   align-items: center;
   gap: 24px;
-  padding: 0 18px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--line);
-  background: #17191c;
+  background: var(--stage);
   position: relative;
   z-index: 20;
 }
@@ -232,7 +265,7 @@ select:focus-visible {
 }
 
 .brand-lockup {
-  gap: 11px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -244,7 +277,7 @@ select:focus-visible {
 
 .brand-lockup div:last-child > span {
   display: block;
-  margin-top: 1px;
+  margin-top: 0;
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.12em;
@@ -266,26 +299,27 @@ select:focus-visible {
 }
 
 .brand-mark span:nth-child(1) {
-  background: #00b7d7;
+  background: var(--ink-c);
 }
 
 .brand-mark span:nth-child(2) {
-  background: #ed3f82;
+  background: var(--ink-m);
 }
 
 .brand-mark span:nth-child(3) {
-  background: #f3d52e;
+  background: var(--ink-y);
 }
 
 .brand-mark span:nth-child(4) {
-  background: #f0eee7;
+  border: 1px solid var(--stage-rule);
+  background: var(--ink-k);
 }
 
 .project-title {
   justify-self: center;
   gap: 8px;
   min-width: 0;
-  color: #d7d5cf;
+  color: var(--paper-3);
   font-size: 13px;
 }
 
@@ -299,10 +333,10 @@ select:focus-visible {
 .saved-state {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   padding-left: 8px;
   border-left: 1px solid var(--line);
-  color: #777b78;
+  color: var(--faint);
   font-size: 11px;
 }
 
@@ -318,9 +352,9 @@ select:focus-visible {
 
 .button {
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   min-height: 36px;
-  padding: 0 13px;
+  padding: 0 16px;
   border-radius: 0;
   font-size: 12px;
   font-weight: 650;
@@ -341,11 +375,11 @@ select:focus-visible {
 
 .button.secondary {
   border: 1px solid var(--line);
-  background: #23262a;
+  background: var(--stage-2);
 }
 
 .button.secondary:hover {
-  background: #2c2f34;
+  background: var(--stage-rule);
   border-color: var(--line);
 }
 
@@ -370,7 +404,7 @@ select:focus-visible {
 }
 
 .icon-button:hover {
-  background: #2b2e32;
+  background: var(--stage-rule);
   color: var(--fg);
 }
 
@@ -380,13 +414,13 @@ select:focus-visible {
 
 .export-menu {
   position: absolute;
-  top: calc(100% + 9px);
+  top: calc(100% + 8px);
   right: 0;
   width: 296px;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: #24272b;
+  background: var(--stage-2);
   z-index: 50;
 }
 
@@ -394,9 +428,9 @@ select:focus-visible {
   width: 100%;
   display: grid;
   grid-template-columns: 24px 1fr;
-  gap: 9px;
+  gap: 8px;
   align-items: start;
-  padding: 11px 10px;
+  padding: 8px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -405,11 +439,11 @@ select:focus-visible {
 }
 
 .export-menu button:hover {
-  background: #30343a;
+  background: var(--stage-rule);
 }
 
 .export-menu svg {
-  margin-top: 1px;
+  margin-top: 0;
   color: var(--muted);
 }
 
@@ -423,7 +457,7 @@ select:focus-visible {
 }
 
 .export-menu small {
-  margin-top: 3px;
+  margin-top: 0;
   color: var(--muted);
   font-size: 10px;
 }
@@ -450,7 +484,7 @@ select:focus-visible {
 .inspector::-webkit-scrollbar-thumb,
 .canvas-scroll::-webkit-scrollbar-thumb {
   border-radius: 0;
-  background: #44474b;
+  background: var(--stage-rule);
 }
 
 .stage-spine {
@@ -468,7 +502,7 @@ select:focus-visible {
   min-height: 32px;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   padding: 8px;
   background: transparent;
   border: 0;
@@ -528,7 +562,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 21px 18px 17px;
+  padding: 24px 16px;
 }
 
 .eyebrow {
@@ -540,28 +574,28 @@ select:focus-visible {
 }
 
 .inspector-heading h1 {
-  margin: 5px 0 0;
+  margin: 8px 0 0;
   font-size: 17px;
   line-height: 1.2;
   letter-spacing: -0.02em;
 }
 
 .control-step {
-  padding: 17px 18px 19px;
+  padding: 16px;
   border-top: 1px solid var(--line);
-  scroll-margin-top: 65px;
+  scroll-margin-top: 64px;
 }
 
 .control-step.final-step {
-  padding-bottom: 34px;
+  padding-bottom: 32px;
 }
 
 .step-header {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 14px;
-  color: #ece9e1;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--paper);
   font-size: 11px;
   font-weight: 720;
   letter-spacing: 0.05em;
@@ -591,18 +625,18 @@ select:focus-visible {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: #25282c;
+  background: var(--stage-2);
   text-align: left;
   cursor: pointer;
 }
 
 .upload-card:hover {
   border-color: var(--line);
-  background: #292d31;
+  background: var(--stage-rule);
 }
 
 .upload-icon {
@@ -611,7 +645,7 @@ select:focus-visible {
   display: grid;
   place-items: center;
   border-radius: 0;
-  background: #33373c;
+  background: var(--stage-rule);
   color: var(--muted);
 }
 
@@ -628,7 +662,7 @@ select:focus-visible {
 }
 
 .upload-card small {
-  margin-top: 3px;
+  margin-top: 0;
   color: var(--muted);
   font-size: 9px;
 }
@@ -649,11 +683,11 @@ select:focus-visible {
 
 .field-grid {
   display: grid;
-  gap: 15px;
+  gap: 16px;
 }
 
 .select-field > span {
-  margin-bottom: 7px;
+  margin-bottom: 8px;
   color: var(--muted);
   font-size: 10px;
 }
@@ -665,17 +699,17 @@ select:focus-visible {
 .select-field select {
   width: 100%;
   height: 34px;
-  padding: 0 10px;
+  padding: 0 32px 0 8px;
   border: 1px solid var(--line);
   border-radius: 0;
   appearance: none;
-  background-color: #292c30;
+  background-color: var(--stage-rule);
   /* Drawn glyph replaces the removed gradient-drawn arrow (§5: no gradients). */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0L5 6L10 0Z' fill='%238e918f'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0L5 6L10 0Z' fill='%23B8B2A4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: calc(100% - 10px) center;
+  background-position: calc(100% - 8px) center;
   background-size: 10px 6px;
-  color: #e7e4dc;
+  color: var(--paper-2);
   font-size: 11px;
 }
 
@@ -713,7 +747,7 @@ select:focus-visible {
 .numeric-input {
   width: 72px;
   min-height: 24px;
-  padding: 4px 6px;
+  padding: 4px 8px;
   background: var(--paper-2);
   border: 1px solid var(--rule);
   color: var(--ink-k);
@@ -753,8 +787,8 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .toggle-row strong,
@@ -763,37 +797,37 @@ select:focus-visible {
 }
 
 .toggle-row strong {
-  color: #dad8d1;
+  color: var(--paper-3);
   font-size: 10px;
 }
 
 .toggle-row small {
-  margin-top: 3px;
+  margin-top: 0;
   color: var(--muted);
   font-size: 9px;
 }
 
 .toggle-row input[type="checkbox"] {
-  width: 31px;
-  height: 17px;
+  width: 48px;
+  height: 32px;
   position: relative;
   flex: 0 0 auto;
   appearance: none;
   border-radius: 0;
-  background: #484c50;
+  background: var(--stage-rule);
   cursor: pointer;
   transition: background 140ms ease;
 }
 
 .toggle-row input[type="checkbox"]::after {
   content: "";
-  width: 13px;
-  height: 13px;
+  width: 24px;
+  height: 24px;
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 4px;
+  left: 4px;
   border-radius: 0;
-  background: #c7c8c4;
+  background: var(--rule-soft);
   transition: transform 140ms ease;
 }
 
@@ -802,8 +836,8 @@ select:focus-visible {
 }
 
 .toggle-row input[type="checkbox"]:checked::after {
-  transform: translateX(14px);
-  background: #fff;
+  transform: translateX(16px);
+  background: var(--paper);
 }
 
 .canvas-stage {
@@ -834,7 +868,7 @@ select:focus-visible {
 }
 
 .stage-toolbar {
-  padding: 0 15px;
+  padding: 0 16px;
 }
 
 .active-plate-label {
@@ -858,14 +892,14 @@ select:focus-visible {
 }
 
 .stage-footer {
-  padding: 0 14px;
+  padding: 0 16px;
   border-top: 1px solid var(--stage-rule);
   border-bottom: 0;
 }
 
 .view-status {
-  gap: 6px;
-  color: #888b87;
+  gap: 8px;
+  color: var(--faint);
   font-size: 9px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -882,7 +916,7 @@ select:focus-visible {
   overflow: auto;
   display: grid;
   place-items: center;
-  padding: 42px;
+  padding: 40px;
   background-color: var(--stage);
 }
 
@@ -908,7 +942,7 @@ select:focus-visible {
   bottom: -27px;
   left: 50%;
   transform: translateX(-50%);
-  color: #727571;
+  color: var(--faint);
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -936,7 +970,7 @@ select:focus-visible {
   gap: 8px;
   min-width: 96px;
   min-height: 32px;
-  padding: 8px 10px;
+  padding: 8px;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--stage-rule);
@@ -958,7 +992,7 @@ select:focus-visible {
 }
 
 .ink-chip:hover {
-  background: #2b2e32;
+  background: var(--stage-rule);
 }
 
 .ink-chip.is-active {
@@ -1001,7 +1035,7 @@ select:focus-visible {
 .ink-chip-angle-field {
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-right: 8px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 10px;
@@ -1022,7 +1056,7 @@ select:focus-visible {
 .ink-chip-angle-input {
   width: 32px;
   min-height: 24px;
-  padding: 2px 1px;
+  padding: 4px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--paper);
@@ -1069,7 +1103,7 @@ select:focus-visible {
  */
 .ink-rail-hint {
   margin: 0;
-  padding: 6px 10px;
+  padding: 8px;
   color: var(--muted);
   font-family: var(--font-ui);
   font-size: 10px;
@@ -1079,8 +1113,8 @@ select:focus-visible {
 }
 
 .quality-note {
-  gap: 7px;
-  color: #7e817e;
+  gap: 8px;
+  color: var(--faint);
   font-size: 9px;
 }
 
@@ -1093,12 +1127,12 @@ select:focus-visible {
 }
 
 .zoom-controls {
-  gap: 6px;
+  gap: 4px;
 }
 
 .zoom-controls .icon-button {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
 }
 
 .zoom-controls .numeric-field {
@@ -1111,7 +1145,7 @@ select:focus-visible {
 
 .zoom-controls .numeric-input {
   width: 42px;
-  padding-inline: 3px;
+  padding-inline: 4px;
   font-size: 11px;
 }
 
@@ -1127,15 +1161,18 @@ select:focus-visible {
 
 .zoom-controls input[type="range"] {
   width: 92px;
-  height: 3px;
+  height: 24px;
   margin: 4px 0;
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
   appearance: none;
-  background: #4a4e53;
+  background: var(--stage-rule);
+  background-clip: content-box;
 }
 
 .zoom-controls input[type="range"]::-webkit-slider-thumb {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   appearance: none;
   border: 2px solid var(--stage);
   background: var(--ink-active);
@@ -1144,7 +1181,7 @@ select:focus-visible {
 
 .drop-overlay {
   position: absolute;
-  inset: 56px 18px 50px;
+  inset: 56px 16px 48px;
   z-index: 30;
   display: grid;
   place-content: center;
@@ -1152,13 +1189,13 @@ select:focus-visible {
   gap: 8px;
   border: 2px dashed var(--ink-active);
   border-radius: 0;
-  background: rgb(24 26 29 / 0.93);
-  color: #f3f0e8;
+  background: var(--stage);
+  color: var(--paper);
   pointer-events: none;
 }
 
 .drop-overlay svg {
-  margin-bottom: 4px;
+  margin-bottom: 8px;
   color: var(--ink-active);
 }
 
@@ -1173,17 +1210,17 @@ select:focus-visible {
 
 .toast {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 16px;
+  bottom: 16px;
   z-index: 100;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 12px;
+  gap: 8px;
+  padding: 8px 16px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: #292c30;
-  color: #e7e5df;
+  background: var(--stage-rule);
+  color: var(--paper-2);
   font-size: 11px;
 }
 
@@ -1193,11 +1230,11 @@ select:focus-visible {
 }
 
 .toast button {
-  width: 23px;
-  height: 23px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  margin-left: 6px;
+  margin-left: 8px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1208,8 +1245,8 @@ select:focus-visible {
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgb(24 18 15 / 0.35);
-  border-top-color: #18120f;
+  border: 2px solid var(--stage-rule);
+  border-top-color: var(--ink-k);
   border-radius: 0;
   animation: spin 700ms linear infinite;
 }
@@ -1217,106 +1254,6 @@ select:focus-visible {
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 900px) {
-  html,
-  body {
-    overflow: auto;
-  }
-
-  .topbar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .project-title {
-    display: none;
-  }
-
-  .workspace {
-    height: auto;
-    min-height: calc(100dvh - 64px);
-    grid-template-columns: 270px minmax(540px, 1fr);
-  }
-
-  .top-actions .button.secondary {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  html,
-  body {
-    overflow: auto;
-  }
-
-  .topbar {
-    position: sticky;
-    top: 0;
-    height: 58px;
-    padding: 0 12px;
-  }
-
-  .brand-lockup div:last-child > span,
-  .top-actions > .icon-button {
-    display: none;
-  }
-
-  .button.primary {
-    min-width: 96px;
-  }
-
-  .workspace {
-    height: auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .inspector {
-    max-height: none;
-    border-right: 0;
-  }
-
-  .inspector-heading {
-    padding: 15px;
-  }
-
-  .control-step {
-    padding: 15px;
-  }
-
-  .canvas-stage {
-    min-height: 620px;
-    order: -1;
-    grid-template-rows: 48px 520px 42px;
-  }
-
-  .canvas-scroll {
-    padding: 34px 20px;
-  }
-
-  .artboard-wrap {
-    width: 92% !important;
-    min-width: 0;
-  }
-
-  .view-status,
-  .quality-note {
-    display: none;
-  }
-
-  .stage-toolbar,
-  .stage-footer {
-    justify-content: center;
-  }
-
-  .export-menu {
-    position: fixed;
-    top: 66px;
-    right: 10px;
-    width: min(296px, calc(100vw - 20px));
   }
 }
 
@@ -1352,7 +1289,7 @@ select:focus-visible {
 
 .auth-header {
   margin-bottom: 24px;
-  padding-bottom: 20px;
+  padding-bottom: 24px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -1396,7 +1333,7 @@ select:focus-visible {
 
 .auth-form-heading {
   display: grid;
-  gap: 4px;
+  gap: 8px;
 }
 
 .auth-form h2 {
@@ -1430,8 +1367,8 @@ select:focus-visible {
   display: block;
   width: 100%;
   min-height: 40px;
-  margin-top: 6px;
-  padding: 8px 10px;
+  margin-top: 8px;
+  padding: 8px;
   border: 1px solid var(--rule);
   background: var(--paper-2);
   color: var(--ink-k);
@@ -1450,7 +1387,7 @@ select:focus-visible {
 }
 
 .auth-field-hint {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   color: var(--ink-k);
   font-family: var(--font-mono);
   font-size: 9px;
@@ -1504,7 +1441,7 @@ select:focus-visible {
 }
 
 .auth-switch {
-  margin: 20px 0 0;
+  margin: 24px 0 0;
   padding-top: 16px;
   border-top: 1px solid var(--rule-soft);
   color: var(--ink-k);
@@ -1516,7 +1453,7 @@ select:focus-visible {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
-  padding: 0 4px;
+  padding: 0 8px;
   color: var(--ink-k);
   font-weight: 700;
   text-decoration: underline;
@@ -1535,14 +1472,14 @@ select:focus-visible {
 
 .session-badge {
   position: fixed;
-  left: 14px;
-  bottom: 14px;
+  left: 16px;
+  bottom: 16px;
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-height: 40px;
-  padding: 4px 4px 4px 10px;
+  padding: 8px;
   border: 1px solid var(--rule);
   background: var(--paper);
   color: var(--ink-k);
@@ -1569,7 +1506,7 @@ select:focus-visible {
   min-height: 32px;
   display: inline-grid;
   place-items: center;
-  padding: 6px 10px;
+  padding: 8px;
   border: 1px solid var(--rule);
   background: var(--ink-k);
   color: var(--paper);
@@ -1600,11 +1537,11 @@ select:focus-visible {
 
 @media (max-width: 480px) {
   .auth-card {
-    padding: 22px 18px 20px;
+    padding: 24px 16px;
   }
 
   .session-badge {
-    left: 10px;
-    bottom: 10px;
+    left: 8px;
+    bottom: 8px;
   }
 }
