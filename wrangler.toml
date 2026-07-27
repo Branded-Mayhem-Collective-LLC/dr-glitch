@@ -11,3 +11,9 @@ run_worker_first = ["/api/*"]
 
 [observability]
 enabled = true
+
+[[d1_databases]]
+binding = "DATABASE"
+database_name = "halftone-web-db"
+database_id = "58107fbc-9930-41f7-ad25-3ab4c7500e49"
+migrations_dir = "drizzle"
