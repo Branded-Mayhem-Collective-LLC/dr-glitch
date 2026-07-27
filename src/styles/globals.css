@@ -794,6 +794,26 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 0 15px;
 }
 
+.active-plate-label {
+  color: var(--paper);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/*
+ * §6.1 wraps the ink rail and the scrollable proof together so the rail
+ * stays fixed in place (never scrolls away) while .canvas-scroll scrolls
+ * its own content. Both live in canvas-stage's middle grid row.
+ */
+.stage-body {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
 .stage-footer {
   padding: 0 14px;
   border-top: 1px solid var(--stage-rule);
@@ -849,6 +869,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .canvas-scroll {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -884,6 +905,97 @@ input[type="range"]::-webkit-slider-thumb {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/*
+ * §6.1 Ink rail — persistent, never scrolls away. §9: hit targets >=32px,
+ * identity carried by swatch + letter + angle together, never hue alone.
+ * §5: zero radius, no gradients, hard 2px/2px offset shadow only.
+ */
+.ink-rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 0;
+  border-right: 1px solid var(--stage-rule);
+  background: var(--stage-2);
+  overflow-y: auto;
+}
+
+.ink-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+  min-height: 32px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--stage-rule);
+  color: var(--paper);
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.ink-chip:hover {
+  background: #2b2e32;
+}
+
+.ink-chip.is-active {
+  background: var(--stage);
+  box-shadow: 2px 2px 0 var(--ink-active);
+}
+
+.ink-chip[data-visible="false"] {
+  opacity: 0.4;
+}
+
+.ink-chip-swatch {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1px solid var(--stage-rule);
+}
+
+/*
+ * §6.2: composite carries no single plate hue — a hairline stripe of all
+ * four inks instead. Built from four real elements, not a CSS gradient
+ * (banned outright by §5, regardless of hard color stops).
+ */
+.ink-chip-swatch-composite {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.ink-chip-swatch-composite span {
+  flex: 1;
+}
+
+.ink-chip-letter {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.ink-chip-angle {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.ink-chip:focus-visible {
+  outline: 2px solid var(--ink-active);
+  outline-offset: 0;
+  box-shadow: inset 0 0 0 1px var(--ink-k);
+}
+
+.ink-chip.is-active:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px var(--ink-k),
+    2px 2px 0 var(--ink-active);
 }
 
 .quality-note {

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import JSZip from "jszip";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
+import InkRail from "./InkRail";
 import {
   createDemoArtwork,
   HalftoneSettings,
@@ -182,6 +183,20 @@ export default function HalftoneStudio() {
     key: K,
     value: HalftoneSettings[K],
   ) => setSettings((current) => ({ ...current, [key]: value }));
+
+  const handleSolo = useCallback((plate: Plate) => {
+    setActivePlate(plate);
+  }, []);
+
+  const handleToggleVisible = useCallback(
+    (plate: Exclude<Plate, "composite">) => {
+      setSettings((current) => ({
+        ...current,
+        visible: { ...current.visible, [plate]: !current.visible[plate] },
+      }));
+    },
+    [],
+  );
 
   function loadFile(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -529,24 +544,38 @@ export default function HalftoneStudio() {
                 </button>
               ))}
             </div>
+            <span className="active-plate-label" data-testid="active-plate-label">
+              Viewing: {activePlate === "composite" ? "Composite" : PLATE_META[activePlate].label}
+            </span>
             <div className="view-status">
               <Sparkles size={14} />
               <span>Live browser preview</span>
             </div>
           </div>
 
-          <div className="canvas-scroll">
-            <div
-              className="artboard-wrap"
-              style={{ width: `${zoom}%` }}
-              onDoubleClick={() => setZoom(76)}
-            >
-              <canvas ref={canvasRef} aria-label="Live CMYK halftone preview" />
-              <span className="artboard-label">
-                {activePlate === "composite"
-                  ? "Composite proof"
-                  : `${PLATE_META[activePlate].label} plate`}
-              </span>
+          <div className="stage-body">
+            <InkRail
+              activePlate={activePlate}
+              settings={settings}
+              onSolo={handleSolo}
+              onToggleVisible={handleToggleVisible}
+            />
+
+            <div className="canvas-scroll">
+              <div
+                className="artboard-wrap"
+                style={{ width: `${zoom}%` }}
+                onDoubleClick={() => setZoom(76)}
+              >
+                <canvas ref={canvasRef} aria-label="Live CMYK halftone preview" />
+                <span className="artboard-label">
+                  {activePlate === "composite"
+                    ? "Composite proof"
+                    : settings.visible[activePlate]
+                      ? `${PLATE_META[activePlate].label} plate`
+                      : `${PLATE_META[activePlate].label} plate — hidden`}
+                </span>
+              </div>
             </div>
           </div>
 
