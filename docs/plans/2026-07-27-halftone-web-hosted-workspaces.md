@@ -587,7 +587,7 @@ export function parseSettings(input: unknown): ParseResult {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run --project unit`
-Expected: PASS, 14 tests total across both unit files.
+Expected: PASS, 17 tests total across both unit files (9 in `halftone-math.test.ts`, 8 new here).
 
 - [ ] **Step 5: Commit**
 
