@@ -520,7 +520,7 @@ Deliverable: the product name lives in exactly one place; the misregistration ef
 
 **Interfaces:**
 - Consumes: tokens from Task 3.
-- Produces: `WORDMARK: string`, `WORDMARK_APPROVED: boolean`, `PRODUCT_NAME: string` from `src/brand.ts`. Tasks 8 and 9 import `PRODUCT_NAME`. CSS class `.glitch` is available but permitted only on the surfaces §8 lists.
+- Produces: `PRODUCT_NAME: string` and `PRODUCT_TAGLINE: string` from `src/brand.ts`. Tasks 8, 9, and 10 import `PRODUCT_NAME`. CSS class `.glitch` is available but permitted only on the surfaces §8 lists.
 
 - [ ] **Step 1: Create the naming gate**
 
@@ -599,15 +599,15 @@ In `src/styles/globals.css`:
 }
 
 /* Structural guard: the effect cannot render inside the stage. */
-.stage .glitch::before,
-.stage .glitch::after,
+.canvas-stage .glitch::before,
+.canvas-stage .glitch::after,
 .inspector .glitch::before,
 .inspector .glitch::after {
   display: none;
 }
 ```
 
-Read `globals.css` first to confirm the real class names for the stage and inspector containers, and use those actual names in the guard rather than the illustrative `.stage` / `.inspector` above. Report which selectors you used.
+The REAL container class names in this codebase are `.canvas-stage` (the `<section>` holding the live CMYK preview canvas) and `.inspector` (the `<aside>` holding all live controls). Use those. Note that `.stage` matches NOTHING here — a guard written against it silently protects nothing.
 
 - [ ] **Step 3: Update the hardcoded title**
 
