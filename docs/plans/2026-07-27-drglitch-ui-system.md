@@ -1921,6 +1921,23 @@ Expected: FAIL — no `desktop-only` element.
 }
 ```
 
+- [ ] **Step 3b: 8px grid spacing pass (carried from Task 3)**
+
+Task 3 deliberately deferred this with explicit sign-off: it is ungated, unverifiable without a screenshot-diff harness, and has a high blast radius. It lands here instead, where the visual system is otherwise settled.
+
+§5: 8px base grid. Sweep `src/styles/globals.css` for `padding` and `margin` values that are not multiples of 8 (or 4 where a half-step is genuinely needed on dense numeric rows), and snap them. Work section by section, checking the rendered result as you go — do NOT run a blind find/replace on every length in the file.
+
+Leave alone: border widths, font sizes, line heights, `letter-spacing`, and any length inside a `@font-face` or `clip-path`. Those are not spacing.
+
+After the sweep, re-run the full gate and confirm nothing moved:
+
+```bash
+npx playwright test design-system
+npx playwright test render-regression
+```
+
+Report which sections you snapped and any value you deliberately left off-grid, with the reason.
+
 - [ ] **Step 4: Fix any accessibility failures the tests surface**
 
 Run: `npx playwright test design-system`
