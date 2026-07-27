@@ -1850,6 +1850,33 @@ test.describe("accessibility floor and mobile", () => {
     expect(violations).toEqual([]);
   });
 
+  test("reduced motion suppresses the glitch even on permitted surfaces", async ({ page }) => {
+    // §9: prefers-reduced-motion disables the register-snap ENTIRELY.
+    // The allowlist's `display: block` on permitted surfaces has higher
+    // specificity than the reduced-motion rule, so the latter carries
+    // !important. Without it, the wordmark would keep glitching for users
+    // who asked it not to. This test pins that cascade.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+    const state = await page.evaluate(() => {
+      const el = document.querySelector(".brand-lockup strong") as HTMLElement | null;
+      if (!el) return null;
+      el.classList.add("glitch");
+      el.setAttribute("data-text", "X");
+      const result = {
+        before: getComputedStyle(el, "::before").display,
+        after: getComputedStyle(el, "::after").display,
+      };
+      el.classList.remove("glitch");
+      el.removeAttribute("data-text");
+      return result;
+    });
+    expect(state).not.toBeNull();
+    expect(state!.before).toBe("none");
+    expect(state!.after).toBe("none");
+  });
+
   test("focus is visible on every interactive control", async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
