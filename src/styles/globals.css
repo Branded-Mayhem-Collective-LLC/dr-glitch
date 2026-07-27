@@ -34,21 +34,23 @@
   --rule-soft: #B8B2A4;
 
   /* Stage — neutral, proof-safe. Zero blue cast by design (§3). */
-  --stage: #1C1D1F;
-  --stage-2: #232426;
-  --stage-rule: #34363A;
+  --stage: #1D1D1D;
+  --stage-2: #242424;
+  --stage-rule: #363636;
 
   /* Legacy aliases, retained so existing rules resolve. Migrate opportunistically. */
   --shell: var(--stage);
   --panel: var(--stage-2);
   --panel-2: var(--stage-2);
   --line: var(--stage-rule);
-  --ink: var(--paper);
-  /* --muted/--faint neutralised: #9d9b95 (warm +2..8) / #6f716f (green +2) both
-     read as tinted greys under §3's "no tinted greys" law. Luminance-matched
-     to true R=G=B neutrals (Rec. 709 luma) so nothing visibly shifts. */
+  --fg: var(--paper);
+  /* --muted/--faint: true R=G=B neutrals (§3 "no tinted greys"). --muted
+     (#9b9b9b) already cleared WCAG AA (4.5:1) against both stage grounds
+     unlifted. --faint was lifted from #707070 (2.9:1) to #8c8c8c to clear
+     4.5:1 against --stage-2, the harder of the two grounds — see contrast
+     table in task-3-report.md. */
   --muted: #9b9b9b;
-  --faint: #707070;
+  --faint: #8c8c8c;
 
   --font-display: "Archivo", sans-serif;
   --font-ui: "Archivo", sans-serif;
@@ -74,7 +76,7 @@ body {
   min-height: 100%;
   overflow: hidden;
   background: var(--shell);
-  color: var(--ink);
+  color: var(--fg);
   font-family: var(--font-ui);
 }
 
@@ -244,7 +246,7 @@ select:focus-visible {
 
 .button.primary {
   min-width: 112px;
-  background: var(--ink-k);
+  background: var(--rule);
   color: var(--paper);
 }
 
@@ -264,7 +266,7 @@ select:focus-visible {
 
 .icon-button:hover {
   background: #2b2e32;
-  color: var(--ink);
+  color: var(--fg);
 }
 
 .export-wrap {
@@ -402,8 +404,8 @@ select:focus-visible {
 
 .step-number.complete {
   /* §3: success carries no color, a filled mark only. */
-  border-color: var(--ink-k);
-  background: var(--ink-k);
+  border-color: var(--rule);
+  background: var(--rule);
   color: var(--paper);
 }
 
@@ -795,7 +797,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 6px;
   height: 6px;
   border-radius: 0;
-  background: var(--ink);
+  background: var(--fg);
 }
 
 .zoom-controls {
@@ -867,7 +869,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .toast > svg {
   /* §3: success carries no color, a filled mark only. */
-  color: var(--ink);
+  color: var(--fg);
 }
 
 .toast button {
@@ -1039,7 +1041,7 @@ input[type="range"]::-webkit-slider-thumb {
   margin: 0 0 2px;
   font-size: 19px;
   letter-spacing: -0.02em;
-  color: var(--ink);
+  color: var(--fg);
 }
 
 .auth-subtitle {
@@ -1077,7 +1079,7 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: 4px;
   border: 0;
   border-radius: 0;
-  background: var(--ink-k);
+  background: var(--rule);
   color: var(--paper);
   font-size: 12px;
   font-weight: 650;
@@ -1153,7 +1155,7 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid var(--line);
   border-radius: 0;
   background: #2c2f34;
-  color: var(--ink);
+  color: var(--fg);
   font-size: 10px;
   font-weight: 650;
   text-decoration: none;
