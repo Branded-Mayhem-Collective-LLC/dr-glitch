@@ -83,14 +83,17 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
     }
   });
 
-  // Empirically verified (not assumed): Chromium fires a click with
-  // altKey=true for a keyboard-activated button on Alt+Space, but NOT on
-  // Alt+Enter — holding Alt suppresses the browser's default
-  // Enter-activates-button behavior outright (confirmed via a live click
-  // listener: no click event fires at all for Alt+Enter). So Alt+Space is
-  // the real, documented keyboard path, and this test exercises that path,
-  // not the one that silently doesn't work.
-  test("keyboard Enter solos a chip; Alt+Space toggles its visibility without soloing", async ({
+  // Empirically verified (not assumed): Chromium never fires a click for
+  // Alt+Enter on a focused <button> — holding Alt suppresses the browser's
+  // default Enter-activates-button behavior outright (confirmed via a live
+  // click listener: keydown/keyup fire, focus is retained, but no click
+  // event follows). That only rules out relying on native click synthesis;
+  // it doesn't rule out Alt+Enter itself. The component's onKeyDown
+  // intercepts it directly and calls onToggleVisible without going through
+  // synthesis, which is what this test exercises. Alt+Enter is the
+  // PRIMARY documented gesture (symmetric with Alt-click, dodges the
+  // Windows Alt+Space/system-menu collision).
+  test("keyboard Enter solos a chip; Alt+Enter toggles its visibility without soloing", async ({
     page,
   }) => {
     const magenta = page.getByTestId("ink-chip-magenta");
@@ -100,11 +103,27 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
     await expect(page.getByTestId("active-plate-label")).toContainText(/magenta/i);
 
     await page.keyboard.down("Alt");
-    await page.keyboard.press(" ");
+    await page.keyboard.press("Enter");
     await page.keyboard.up("Alt");
     await expect(magenta).toHaveAttribute("data-visible", "false");
-    // Alt+Space toggled visibility only — the solo did not change.
+    // Alt+Enter toggled visibility only — the solo did not change.
     await expect(magenta).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // Alt+Space is kept as an unadvertised secondary path — it already works
+  // through the browser's native click synthesis (Chromium carries the
+  // held modifier into the keyup-triggered click, no extra code needed),
+  // so retaining it costs nothing. Not documented in aria-label, title, or
+  // the on-screen hint — Alt+Enter is the one users are told about.
+  test("Alt+Space also toggles visibility, as an unadvertised secondary path", async ({
+    page,
+  }) => {
+    const yellow = page.getByTestId("ink-chip-yellow");
+    await yellow.focus();
+    await page.keyboard.down("Alt");
+    await page.keyboard.press(" ");
+    await page.keyboard.up("Alt");
+    await expect(yellow).toHaveAttribute("data-visible", "false");
   });
 
   test("accessible name states plate identity and hidden/visible state, not just a hover title", async ({

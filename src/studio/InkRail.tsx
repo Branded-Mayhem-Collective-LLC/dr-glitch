@@ -25,14 +25,28 @@ type Props = {
  * empirically (not assumed) which modifier+activation combo actually fires
  * a click with altKey set on a focused <button> in Chromium. Plain Enter
  * and plain Space both solo, as expected. Alt+Space reliably fires a click
- * with altKey=true — Chromium carries the held modifier into the keyup-
- * triggered click. Alt+Enter does NOT: holding Alt suppresses the browser's
- * default Enter-activates-button behavior entirely (no click event fires
- * at all — confirmed via a live listener, not inferred from a no-op
- * result). So the discoverable, documented keyboard gesture is Alt+Space,
- * not Alt+Enter. aria-label (not just the hover-only title) states plate
- * identity, angle, current visibility, and that gesture, so both
- * sighted-mouse and screen-reader users get the same information.
+ * with altKey=true via the browser's native click synthesis — Chromium
+ * carries the held modifier into the keyup-triggered click, no extra code
+ * needed. Alt+Enter does NOT synthesize a click: holding Alt suppresses the
+ * browser's default Enter-activates-button behavior entirely (confirmed via
+ * a live listener — the keydown/keyup fire, focus is retained, but no click
+ * event follows).
+ *
+ * That only rules out relying on native click synthesis for Alt+Enter — it
+ * doesn't rule out Alt+Enter itself. A direct onKeyDown intercept bypasses
+ * synthesis and calls onToggleVisible straight from the keydown handler.
+ * Alt+Enter is the documented PRIMARY gesture (symmetric with Alt-click, the
+ * first thing a user would guess, and it dodges Alt+Space's Windows
+ * collision with the native window system-menu shortcut). Alt+Space is kept
+ * working as an unadvertised secondary path — it costs nothing extra, since
+ * it already works through the existing altKey check in onClick below.
+ *
+ * aria-label (not just the hover-only title) states plate identity, angle,
+ * current visibility, and the primary gesture, so both sighted-mouse and
+ * screen-reader users get the same information. A quiet on-screen hint line
+ * (§7: "every control states its consequence in one line of plain
+ * language") gives sighted keyboard-only users — who see neither title nor
+ * aria-label — the same discoverability.
  *
  * Markup note (Task 5 ambiguity, resolved): chips render as a single
  * <button> per §9's requirement that letter + angle live together in one
@@ -79,7 +93,7 @@ export default function InkRail({
         // state — data-visible alone exposes nothing to assistive tech.
         const ariaLabel = `${meta.label} plate, angle ${angle} degrees, ${
           visible ? "visible" : "hidden"
-        }. Enter to solo. Alt+Space to ${visible ? "hide" : "show"}.`;
+        }. Enter to solo. Alt+Enter to ${visible ? "hide" : "show"}.`;
         return (
           <button
             key={plate}
@@ -89,13 +103,25 @@ export default function InkRail({
             aria-pressed={activePlate === plate}
             aria-label={ariaLabel}
             data-visible={visible ? "true" : "false"}
-            title={`${meta.label} — click to solo, Alt-click (or focus + Alt+Space) to hide${isHiddenAndActive ? " (currently hidden — plate renders blank)" : ""}`}
+            title={`${meta.label} — click to solo, Alt-click (or focus + Alt+Enter) to hide${isHiddenAndActive ? " (currently hidden — plate renders blank)" : ""}`}
             onClick={(event) => {
               if (event.altKey || event.metaKey) {
                 onToggleVisible(plate);
                 return;
               }
               onSolo(plate);
+            }}
+            onKeyDown={(event) => {
+              // Alt+Enter: Chromium never synthesizes a click here (holding
+              // Alt suppresses the default Enter-activates-button behavior
+              // outright), so this is a direct intercept, not a fallback for
+              // a flaky native path. preventDefault to stop any browser
+              // chrome (e.g. a stray form submit) from reacting to the
+              // Enter keydown once we've handled it ourselves.
+              if (event.altKey && event.key === "Enter") {
+                event.preventDefault();
+                onToggleVisible(plate);
+              }
             }}
           >
             <span
@@ -108,6 +134,17 @@ export default function InkRail({
           </button>
         );
       })}
+
+      {/*
+       * §7: every control states its consequence in one line of plain
+       * language. aria-label and title cover screen-reader and hover users;
+       * this line is for a sighted keyboard-only user tabbing through the
+       * rail, who sees neither. Kept quiet (micro-label style) so it
+       * doesn't compete with the proof.
+       */}
+      <p className="ink-rail-hint" data-testid="ink-rail-hint">
+        Click to solo · Alt-click or Alt+Enter to hide
+      </p>
     </div>
   );
 }

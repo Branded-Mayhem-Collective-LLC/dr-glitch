@@ -962,6 +962,22 @@ input[type="range"]::-webkit-slider-thumb {
     2px 2px 0 var(--ink-active);
 }
 
+/*
+ * §7 on-screen discoverability for the keyboard gesture. Micro-label
+ * style matches .artboard-label's tokens (10px/uppercase/--muted) — quiet,
+ * never competes with the proof. No radius, no gradient, no blur (§5).
+ */
+.ink-rail-hint {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .quality-note {
   gap: 7px;
   color: #7e817e;
