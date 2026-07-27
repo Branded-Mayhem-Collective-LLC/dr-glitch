@@ -20,6 +20,7 @@ import {
 import JSZip from "jszip";
 import SessionBadge from "../auth/SessionBadge";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
+import ProcessLoader from "../components/ProcessLoader";
 import InkRail from "./InkRail";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
 import NumericField from "./NumericField";
@@ -389,7 +390,11 @@ export default function HalftoneStudio() {
               onClick={() => setExportOpen((current) => !current)}
               disabled={exporting}
             >
-              {exporting ? <span className="spinner" /> : <Download size={16} />}
+              {exporting ? (
+                <ProcessLoader compact label="Preparing export" />
+              ) : (
+                <Download size={16} />
+              )}
               {exporting ? "Preparing…" : "Export"}
               <ChevronDown size={14} />
             </button>

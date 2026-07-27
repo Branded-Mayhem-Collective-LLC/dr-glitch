@@ -320,7 +320,7 @@ test.describe("DR.GLITCH design system", () => {
     page,
   }) => {
     const offenders: string[] = [];
-    for (const route of ["/", "/login", "/signup"]) {
+    for (const route of ["/", "/landing", "/login", "/signup"]) {
       await page.goto(route);
       if (route === "/") await page.waitForSelector("canvas");
       const routeOffenders = await auditComputedPaint(page);
@@ -628,7 +628,7 @@ test.describe("accessibility floor and mobile", () => {
     expect(state!.after).toBe("none");
   });
 
-  for (const route of ["/", "/login", "/signup"]) {
+  for (const route of ["/", "/landing", "/login", "/signup"]) {
     test(`${route} gives every visible enabled interactive control a visible focus indicator`, async ({
       page,
     }) => {

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import authClient from "../auth/client";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
+import ProcessAction from "../components/ProcessAction";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -84,9 +85,14 @@ export default function Signup() {
             </p>
           </div>
           {error ? <p role="alert">{error}</p> : null}
-          <button type="submit" disabled={busy}>
-            {busy ? "Creating account" : "Create account"}
-          </button>
+          <ProcessAction
+            type="submit"
+            disabled={busy}
+            busy={busy}
+            busyLabel="Creating account"
+          >
+            Create account
+          </ProcessAction>
         </form>
         <p className="auth-switch">
           Already have an account? <Link to="/login">Sign in</Link>
