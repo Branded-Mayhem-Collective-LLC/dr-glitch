@@ -44,4 +44,21 @@ describe("coverageFor", () => {
     const hot = { ...base, exposure: 5 };
     expect(coverageFor("cyan", 128, 128, 128, hot)).toBe(1);
   });
+
+  it("reads magenta from the green channel", () => {
+    expect(coverageFor("magenta", 255, 0, 255, base)).toBeCloseTo(1);
+    expect(coverageFor("magenta", 0, 255, 0, base)).toBeCloseTo(0);
+  });
+
+  it("reads yellow from the blue channel", () => {
+    expect(coverageFor("yellow", 255, 255, 0, base)).toBeCloseTo(1);
+    expect(coverageFor("yellow", 0, 0, 255, base)).toBeCloseTo(0);
+  });
+
+  it("scales deviation from mid-grey by contrast", () => {
+    const flat = { ...base, contrast: 0 };
+    expect(coverageFor("cyan", 0, 255, 255, flat)).toBeCloseTo(0.5);
+    const punchy = { ...base, contrast: 2 };
+    expect(coverageFor("cyan", 191, 255, 255, punchy)).toBeCloseTo(0.0, 1);
+  });
 });
