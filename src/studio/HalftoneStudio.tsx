@@ -51,14 +51,6 @@ const DEFAULT_SETTINGS: HalftoneSettings = {
   visible: { cyan: true, magenta: true, yellow: true, black: true },
 };
 
-const tabs: { id: Plate; label: string }[] = [
-  { id: "composite", label: "Composite" },
-  { id: "cyan", label: "C" },
-  { id: "magenta", label: "M" },
-  { id: "yellow", label: "Y" },
-  { id: "black", label: "K" },
-];
-
 function RangeControl({
   label,
   value,
@@ -196,6 +188,16 @@ export default function HalftoneStudio() {
       }));
     },
     [],
+  );
+
+  // §1: "a print tool that misleads the eye about ink is broken." renderHalftone
+  // blanks any plate (including every plate inside a composite render) whose
+  // settings.visible flag is off, so the proof can go blank while its label
+  // still claims to show something. hiddenPlates drives the same label logic
+  // for both the single-plate case (already handled below) and composite.
+  const hiddenPlates = useMemo(
+    () => PLATES.filter((plate) => !settings.visible[plate]),
+    [settings.visible],
   );
 
   function loadFile(file: File) {
@@ -531,19 +533,6 @@ export default function HalftoneStudio() {
           onDrop={onDrop}
         >
           <div className="stage-toolbar">
-            <div className="plate-tabs" role="tablist" aria-label="Preview plate">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={activePlate === tab.id}
-                  className={activePlate === tab.id ? "active" : ""}
-                  onClick={() => setActivePlate(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
             <span className="active-plate-label" data-testid="active-plate-label">
               Viewing: {activePlate === "composite" ? "Composite" : PLATE_META[activePlate].label}
             </span>
@@ -568,9 +557,15 @@ export default function HalftoneStudio() {
                 onDoubleClick={() => setZoom(76)}
               >
                 <canvas ref={canvasRef} aria-label="Live CMYK halftone preview" />
-                <span className="artboard-label">
+                <span className="artboard-label" data-testid="artboard-label">
                   {activePlate === "composite"
-                    ? "Composite proof"
+                    ? hiddenPlates.length === 0
+                      ? "Composite proof"
+                      : hiddenPlates.length === PLATES.length
+                        ? "Composite proof — all plates hidden"
+                        : `Composite proof — ${hiddenPlates
+                            .map((plate) => PLATE_META[plate].short)
+                            .join(", ")} hidden`
                     : settings.visible[activePlate]
                       ? `${PLATE_META[activePlate].label} plate`
                       : `${PLATE_META[activePlate].label} plate — hidden`}

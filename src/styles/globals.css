@@ -820,42 +820,6 @@ input[type="range"]::-webkit-slider-thumb {
   border-bottom: 0;
 }
 
-.plate-tabs {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 0;
-  background: #26292d;
-}
-
-.plate-tabs button {
-  min-width: 34px;
-  height: 27px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: #969995;
-  font-size: 10px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.plate-tabs button:first-child {
-  min-width: 78px;
-}
-
-.plate-tabs button:hover {
-  color: #e4e2da;
-}
-
-.plate-tabs button.active {
-  background: #3a3e43;
-  color: #fff;
-  border-color: var(--stage-rule);
-}
-
 .view-status {
   gap: 6px;
   color: #888b87;
