@@ -35,11 +35,11 @@ type RenderOptions = {
   monochromePlate?: boolean;
 };
 
-function clamp(value: number, min = 0, max = 1) {
+export function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
-function coverageFor(
+export function coverageFor(
   plate: Exclude<Plate, "composite">,
   red: number,
   green: number,
