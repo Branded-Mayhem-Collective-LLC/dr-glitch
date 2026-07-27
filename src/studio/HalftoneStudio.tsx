@@ -22,6 +22,7 @@ import {
 import JSZip from "jszip";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import InkRail from "./InkRail";
+import { CHROME_INK, COMPOSITE_INK } from "./inks";
 import {
   createDemoArtwork,
   HalftoneSettings,
@@ -32,6 +33,7 @@ import {
 } from "./halftone";
 import {
   ChangeEvent,
+  CSSProperties,
   DragEvent,
   useCallback,
   useEffect,
@@ -298,8 +300,19 @@ export default function HalftoneStudio() {
     }
   }
 
+  // §6.2 channel tinting: every active affordance renders in the soloed
+  // plate's ink so the operator never has to ask which plate they're
+  // editing. Composite carries no single plate hue (COMPOSITE_INK, not a
+  // CHROME_INK value) — presented as a hairline stripe instead (InkRail).
+  const activeInk =
+    activePlate === "composite" ? COMPOSITE_INK : CHROME_INK[activePlate];
+
   return (
-    <main className="studio-shell">
+    <main
+      className="studio-shell"
+      data-studio-root
+      style={{ "--ink-active": activeInk } as CSSProperties}
+    >
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">

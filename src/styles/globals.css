@@ -193,8 +193,15 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
+  /*
+   * §9: focus ring is 2px in the active ink PLUS a 1px black inner rule, so
+   * the ring survives when yellow is the active ink (e.g. against a pale
+   * ground it would otherwise sit against with little contrast). Mirrors
+   * the .ink-chip:focus-visible treatment below.
+   */
   outline: 2px solid var(--ink-active);
   outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--ink-k);
 }
 
 .studio-shell {
@@ -557,7 +564,14 @@ select:focus-visible {
 }
 
 .replace-label {
-  color: var(--ink-active);
+  /*
+   * §9: yellow never carries text. "Replace" isn't one of §6.2's five named
+   * tinted affordances (slider fill / focus ring / selected-row marker /
+   * offset shadow / stage-number badge) — kept achromatic on purpose rather
+   * than following --ink-active, so it can't render yellow-on-dark when the
+   * yellow plate is soloed.
+   */
+  color: var(--muted);
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;

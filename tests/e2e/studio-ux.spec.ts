@@ -164,3 +164,34 @@ test.describe("composite proof label — hidden-plate coherence", () => {
     await expect(label).toContainText(/all plates hidden/i);
   });
 });
+
+test.describe("channel tinting", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+  });
+
+  async function activeInk(page: import("@playwright/test").Page) {
+    return page.evaluate(() => {
+      const root = document.querySelector("[data-studio-root]") as HTMLElement;
+      return getComputedStyle(root).getPropertyValue("--ink-active").trim();
+    });
+  }
+
+  test("active ink follows the soloed plate", async ({ page }) => {
+    await page.getByTestId("ink-chip-cyan").click();
+    expect((await activeInk(page)).toLowerCase()).toBe("#0093d0");
+
+    await page.getByTestId("ink-chip-magenta").click();
+    expect((await activeInk(page)).toLowerCase()).toBe("#e6007e");
+
+    await page.getByTestId("ink-chip-yellow").click();
+    expect((await activeInk(page)).toLowerCase()).toBe("#ffe800");
+  });
+
+  test("composite carries no single plate hue", async ({ page }) => {
+    await page.getByTestId("ink-chip-composite").click();
+    // §6.2: composite presents all four as a hairline stripe, not one hue.
+    expect((await activeInk(page)).toLowerCase()).toBe("#101010");
+  });
+});
