@@ -66,6 +66,74 @@
   border-radius: 0;
 }
 
+/*
+ * §8: misregistration is the identity, and it never touches a working surface.
+ * PERMITTED: wordmark, auth screens, empty states, export sheet header,
+ * toasts, splash. FORBIDDEN: the stage, any live control, any surface within
+ * sight of the proof, any numeric readout. Glitch near a proof is a bug.
+ */
+.glitch {
+  position: relative;
+  display: inline-block;
+}
+
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.glitch::before {
+  color: var(--ink-c);
+  transform: translate(-2px, -1px);
+}
+
+.glitch::after {
+  color: var(--ink-m);
+  transform: translate(2px, 1px);
+}
+
+.glitch:hover::before,
+.glitch:focus-visible::before,
+.glitch:hover::after,
+.glitch:focus-visible::after {
+  transform: translate(0, 0);
+  transition: transform 120ms steps(3, end);
+}
+
+/* §9: reduced motion disables the register-snap entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .glitch::before,
+  .glitch::after {
+    display: none;
+  }
+  .glitch:hover::before,
+  .glitch:focus-visible::before,
+  .glitch:hover::after,
+  .glitch:focus-visible::after {
+    transition: none;
+  }
+}
+
+/*
+ * Structural guard: the effect cannot render inside the proof stage or the
+ * control panel, even if a future author mistakenly adds .glitch there.
+ * Real container class names, confirmed in src/studio/HalftoneStudio.tsx:
+ *   - .canvas-stage  — the <section> holding the live CMYK preview canvas
+ *   - .inspector     — the <aside> holding all live controls (upload, screen,
+ *                       plate angles, output toggles)
+ * (The brief's illustrative .stage / .inspector selectors do not match this
+ * codebase; .canvas-stage is the real proof-stage container.)
+ */
+.canvas-stage .glitch::before,
+.canvas-stage .glitch::after,
+.inspector .glitch::before,
+.inspector .glitch::after {
+  display: none;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import authClient from "../auth/client";
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -51,8 +52,8 @@ export default function Signup() {
             <span />
           </div>
           <div>
-            <strong>DRC Halftone</strong>
-            <span>CMYK Studio</span>
+            <strong>{PRODUCT_NAME}</strong>
+            <span>{PRODUCT_TAGLINE}</span>
           </div>
         </div>
         <form onSubmit={onSubmit} className="auth-form">

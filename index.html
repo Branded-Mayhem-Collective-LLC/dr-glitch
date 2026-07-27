@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#17191c" />
     <link rel="icon" href="/favicon.svg" />
-    <title>DRC Halftone — CMYK Studio</title>
+    <!--
+      Canonical name lives in src/brand.ts (PRODUCT_NAME). Static HTML can't
+      import it, so this <title> is the one permitted duplicate literal — if
+      the name changes, update both places together.
+    -->
+    <title>DR.GLITCH — CMYK Separation Studio</title>
     <meta
       name="description"
       content="Build and export production-ready CMYK halftone separations in your browser."

@@ -20,6 +20,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import JSZip from "jszip";
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import {
   createDemoArtwork,
   HalftoneSettings,
@@ -291,8 +292,8 @@ export default function HalftoneStudio() {
             <span />
           </div>
           <div>
-            <strong>DRC Halftone</strong>
-            <span>CMYK Studio</span>
+            <strong>{PRODUCT_NAME}</strong>
+            <span>{PRODUCT_TAGLINE}</span>
           </div>
         </div>
 
