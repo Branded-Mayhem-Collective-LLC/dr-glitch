@@ -128,6 +128,7 @@ test("session badge focus follows the selected plate ink with a black inner rule
 }) => {
   await page.goto("/");
   await page.waitForSelector("canvas");
+  await page.getByTestId("stage-separation").click();
 
   const action = page.getByTestId("session-badge-action");
   for (const [plate, color] of [

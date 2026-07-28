@@ -131,9 +131,10 @@ change, and needs field labels that survive at 10px. Owned by this spec, not slo
 The separation becomes the navigation.
 
 ### 6.1 Ink rail (new)
-A persistent vertical rail of four solid C/M/Y/K chips, always visible, never scrolls
-away. Click a chip = **solo that plate**. Modifier-click = toggle visibility. Solo is
-the single largest speed win in the redesign and does not exist today.
+A vertical rail of four solid C/M/Y/K chips, visible only while the
+**Separation** stage is active and fixed while the proof scrolls. Click a chip =
+**solo that plate**. Modifier-click = toggle visibility. Solo is the single
+largest speed win in the redesign and does not exist today.
 
 ### 6.2 Channel tinting (the law that makes it legible)
 When a plate is active, **every active affordance in the inspector renders in that

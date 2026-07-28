@@ -1218,9 +1218,8 @@ select:focus-visible {
 }
 
 /*
- * §6.1 wraps the ink rail and the scrollable proof together so the rail
- * stays fixed in place (never scrolls away) while .canvas-scroll scrolls
- * its own content. Both live in canvas-stage's middle grid row.
+ * The Separation-stage ink rail stays fixed while .canvas-scroll scrolls
+ * the proof. Both occupy canvas-stage's middle grid row.
  */
 .stage-body {
   min-width: 0;
@@ -1236,6 +1235,7 @@ select:focus-visible {
 
 .view-status {
   gap: 8px;
+  margin-left: auto;
   color: var(--faint);
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -1287,8 +1287,8 @@ select:focus-visible {
 }
 
 /*
- * §6.1 Ink rail — persistent, never scrolls away. §9: hit targets >=32px,
- * identity carried by swatch + letter + angle together, never hue alone.
+ * §6.1 Ink rail — visible only in Separation and fixed while present.
+ * §9: hit targets >=32px; identity uses swatch + letter + angle, never hue alone.
  * §5: zero radius, no gradients, hard 2px/2px offset shadow only.
  */
 .ink-rail {

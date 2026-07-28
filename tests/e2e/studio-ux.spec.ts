@@ -1,4 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function openSeparation(page: Page) {
+  await page.getByTestId("stage-separation").click();
+}
 
 function contrastRatio(foreground: string, background: string) {
   function luminance(color: string) {
@@ -25,6 +29,7 @@ test.describe("ink rail", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
+    await openSeparation(page);
   });
 
   test("renders four plate chips plus composite", async ({ page }) => {
@@ -78,6 +83,7 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
+    await openSeparation(page);
   });
 
   // The rail is now the ONLY way to change plates (.plate-tabs removed) —
@@ -87,6 +93,7 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
     page,
   }) => {
     const order = ["composite", "cyan", "magenta", "yellow", "black"];
+    await page.keyboard.press("Tab");
     await page.getByTestId(`ink-chip-${order[0]}`).focus();
 
     for (const [index, plate] of order.entries()) {
@@ -176,6 +183,7 @@ test.describe("composite proof label — hidden-plate coherence", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
+    await openSeparation(page);
   });
 
   // §1: "a print tool that misleads the eye about ink is broken." A blank
@@ -202,6 +210,7 @@ test.describe("channel tinting", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
+    await openSeparation(page);
   });
 
   async function activeInk(page: import("@playwright/test").Page) {
@@ -382,6 +391,7 @@ test.describe("typed numerics", () => {
   });
 
   test("the ink rail is the only plate-angle editor", async ({ page }) => {
+    await openSeparation(page);
     await expect(page.getByTestId("ink-angle-cyan")).toHaveCount(1);
     await expect(page.locator(".inspector .angle-field")).toHaveCount(0);
   });
@@ -389,6 +399,7 @@ test.describe("typed numerics", () => {
   test("plate angles are typed or dragged inline without changing the soloed plate", async ({
     page,
   }) => {
+    await openSeparation(page);
     await page.getByTestId("ink-chip-composite").click();
     const angle = page.getByTestId("ink-angle-cyan");
     await angle.fill("-1");
@@ -411,6 +422,7 @@ test.describe("typed numerics", () => {
   });
 
   test("empty and whitespace-only angle drafts revert", async ({ page }) => {
+    await openSeparation(page);
     const angle = page.getByTestId("ink-angle-cyan");
     const before = await angle.inputValue();
 
@@ -541,6 +553,22 @@ test.describe("stage spine and keyboard", () => {
     }
   });
 
+  test("plate controls and the viewing label exist only in Separation", async ({
+    page,
+  }) => {
+    for (const id of ["artwork", "screen", "output"]) {
+      await page.getByTestId(`stage-${id}`).click();
+      await expect(page.locator(".ink-rail")).toHaveCount(0);
+      await expect(page.getByTestId("active-plate-label")).toHaveCount(0);
+    }
+
+    await openSeparation(page);
+    await expect(page.locator(".ink-rail")).toBeVisible();
+    await expect(page.getByTestId("active-plate-label")).toContainText(
+      "Viewing: Composite",
+    );
+  });
+
   test("inspector collapse and stage selection both change the workspace", async ({
     page,
   }) => {
@@ -570,6 +598,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("number keys solo plates", async ({ page }) => {
+    await openSeparation(page);
     await page.locator("body").press("1");
     await expect(page.getByTestId("active-plate-label")).toContainText(/cyan/i);
     await page.locator("body").press("2");
@@ -581,6 +610,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("backtick returns to composite", async ({ page }) => {
+    await openSeparation(page);
     await page.locator("body").press("1");
     await page.locator("body").press("`");
     await expect(page.getByTestId("active-plate-label")).toContainText(
@@ -605,6 +635,7 @@ test.describe("stage spine and keyboard", () => {
     await field.type("12");
     // '1' and '2' must reach the input, not solo plates.
     await expect(field).toHaveValue("12");
+    await openSeparation(page);
     await expect(page.getByTestId("active-plate-label")).toContainText(
       /composite/i,
     );
@@ -667,6 +698,7 @@ test.describe("press workflow preflight", () => {
   test("preflight names hidden plates and missing registration marks", async ({
     page,
   }) => {
+    await openSeparation(page);
     await page.keyboard.down("Alt");
     await page.getByTestId("ink-chip-cyan").click();
     await page.keyboard.up("Alt");
@@ -691,6 +723,7 @@ test.describe("press workflow preflight", () => {
   test("preflight reports exact shared screen angles without claiming certainty", async ({
     page,
   }) => {
+    await openSeparation(page);
     const yellow = page.getByTestId("ink-angle-yellow");
     await yellow.fill("15");
     await yellow.press("Enter");
