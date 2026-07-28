@@ -154,12 +154,13 @@ Not buried behind a disclosure.
 
 - **Persistent 4-stage spine:** `01 ARTWORK · 02 SCREEN · 03 SEPARATION · 04 OUTPUT`.
   Always visible with completion state and jump-to. Today these scroll out of view.
-- **Type-or-drag on every numeric.** A typed input is the primary affordance; drag is
-  secondary. Production people type `15°` — they do not drag to it. Slider-only is the
-  current build's worst friction.
+- **Type, scrub, or slide every numeric.** Click the value to type; drag the label or
+  value horizontally to scrub; use the visible range control for coarse visual
+  adjustment. Shift accelerates scrubbing 10× and Alt/Option gives 0.1× precision,
+  matching Adobe's established scrubby-slider convention.
 - **Units always rendered**, never implied, never shifting layout.
 - **Keyboard:** `1`–`4` solo plate · `` ` `` composite · `[` `]` cell size ·
-  `Shift`+drag fine adjust · `Space` pan.
+  `Shift`+drag 10× · `Alt/Option`+drag 0.1× · `Space` pan.
 - **Every control states its consequence** in one line of plain language. No LLM jargon,
   no "seamlessly", no "powerful".
 

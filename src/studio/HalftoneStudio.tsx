@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
+  ClipboardCheck,
+  Copy,
   Download,
   FileImage,
   FolderOpen,
@@ -11,6 +14,8 @@ import {
   Layers3,
   MonitorUp,
   PanelLeftClose,
+  PanelLeftOpen,
+  RotateCcw,
   Sparkles,
   Upload,
   X,
@@ -38,6 +43,7 @@ import {
   ChangeEvent,
   CSSProperties,
   DragEvent,
+  ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -56,18 +62,48 @@ const DEFAULT_SETTINGS: HalftoneSettings = {
   visible: { cyan: true, magenta: true, yellow: true, black: true },
 };
 
+const STAGE_DEFINITIONS = [
+  {
+    id: "artwork",
+    number: "01",
+    label: "Artwork",
+    description: "Confirm the source file before building the screen.",
+  },
+  {
+    id: "screen",
+    number: "02",
+    label: "Screen",
+    description: "Set the dot geometry and tonal response.",
+  },
+  {
+    id: "separation",
+    number: "03",
+    label: "Separation",
+    description: "Check each process plate and its screen angle.",
+  },
+  {
+    id: "output",
+    number: "04",
+    label: "Output",
+    description: "Finish the plate package and press handoff.",
+  },
+] as const;
+
+type StudioStageId = (typeof STAGE_DEFINITIONS)[number]["id"];
+
 export default function HalftoneStudio() {
   const [source, setSource] = useState<HTMLImageElement | HTMLCanvasElement | null>(
     null,
   );
-  const [sourceName, setSourceName] = useState("DRC sample artwork");
+  const [sourceName, setSourceName] = useState(`${PRODUCT_NAME} sample artwork`);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [activePlate, setActivePlate] = useState<Plate>("composite");
   const [zoom, setZoom] = useState(76);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
-  const [activeStage, setActiveStage] = useState("artwork");
+  const [activeStage, setActiveStage] = useState<StudioStageId>("artwork");
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [registration, setRegistration] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -208,6 +244,86 @@ export default function HalftoneStudio() {
     () => PLATES.filter((plate) => !settings.visible[plate]),
     [settings.visible],
   );
+  const sharedAngleGroups = useMemo(() => {
+    const grouped = new Map<number, Array<(typeof PLATES)[number]>>();
+    for (const plate of PLATES) {
+      const angle = ((settings.angles[plate] % 360) + 360) % 360;
+      grouped.set(angle, [...(grouped.get(angle) ?? []), plate]);
+    }
+    return [...grouped.entries()].filter(([, plates]) => plates.length > 1);
+  }, [settings.angles]);
+  const preflightReviewCount =
+    (hiddenPlates.length > 0 ? 1 : 0) +
+    (sharedAngleGroups.length > 0 ? 1 : 0) +
+    (!registration ? 1 : 0) +
+    (settings.invert ? 1 : 0);
+
+  function resetScreen() {
+    setSettings((current) => ({
+      ...current,
+      cellSize: DEFAULT_SETTINGS.cellSize,
+      contrast: DEFAULT_SETTINGS.contrast,
+      exposure: DEFAULT_SETTINGS.exposure,
+      dotShape: DEFAULT_SETTINGS.dotShape,
+    }));
+    setNotice("Screen controls reset");
+  }
+
+  function resetSeparation() {
+    setSettings((current) => ({
+      ...current,
+      angles: { ...DEFAULT_SETTINGS.angles },
+      visible: { ...DEFAULT_SETTINGS.visible },
+    }));
+    setActivePlate("composite");
+    setNotice("Plate angles and visibility reset");
+  }
+
+  function resetOutput() {
+    setSettings((current) => ({
+      ...current,
+      opacity: DEFAULT_SETTINGS.opacity,
+      invert: DEFAULT_SETTINGS.invert,
+    }));
+    setRegistration(true);
+    setNotice("Output controls reset");
+  }
+
+  function jobTicketText() {
+    const visible = PLATES.filter((plate) => settings.visible[plate])
+      .map((plate) => PLATE_META[plate].short)
+      .join(", ");
+    return [
+      `${PRODUCT_NAME} JOB TICKET`,
+      `Artwork: ${sourceName}`,
+      `Source: ${sourceMeta}`,
+      `Dot: ${settings.dotShape}`,
+      `Cell size: ${settings.cellSize}px`,
+      `Contrast: ${settings.contrast}×`,
+      `Exposure: ${Math.round(settings.exposure * 100)}%`,
+      `Angles: ${PLATES.map(
+        (plate) => `${PLATE_META[plate].short} ${settings.angles[plate]}°`,
+      ).join(" · ")}`,
+      `Enabled plates: ${visible || "None"}`,
+      `Registration marks: ${registration ? "Included" : "Off"}`,
+      `Invert dots: ${settings.invert ? "On" : "Off"}`,
+      `Ink density: ${Math.round(settings.opacity * 100)}%`,
+    ].join("\n");
+  }
+
+  async function copyJobTicket() {
+    const ticket = jobTicketText();
+    try {
+      await navigator.clipboard.writeText(ticket);
+      setNotice("Job ticket copied");
+    } catch {
+      downloadBlob(
+        new Blob([ticket], { type: "text/plain;charset=utf-8" }),
+        `${cleanName(sourceName)}-job-ticket.txt`,
+      );
+      setNotice("Job ticket downloaded");
+    }
+  }
 
   function loadFile(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -314,39 +430,23 @@ export default function HalftoneStudio() {
   const activeInk =
     activePlate === "composite" ? COMPOSITE_INK : CHROME_INK[activePlate];
 
-  const stages: Stage[] = [
-    {
-      id: "artwork",
-      number: "01",
-      label: "Artwork",
-      complete: Boolean(source),
-    },
-    {
-      id: "screen",
-      number: "02",
-      label: "Screen",
-      complete: false,
-    },
-    {
-      id: "separation",
-      number: "03",
-      label: "Separation",
-      complete: false,
-    },
-    {
-      id: "output",
-      number: "04",
-      label: "Output",
-      complete: false,
-    },
-  ];
+  const stages: Stage[] = STAGE_DEFINITIONS.map((stage) => ({
+    ...stage,
+    complete: stage.id === "artwork" ? Boolean(source) : false,
+  }));
 
   function jumpToStage(id: string) {
-    setActiveStage(id);
-    document.getElementById(id)?.scrollIntoView({
-      block: "start",
-      behavior: "smooth",
-    });
+    if (!STAGE_DEFINITIONS.some((stage) => stage.id === id)) return;
+    setActiveStage(id as StudioStageId);
+    setInspectorCollapsed(false);
+  }
+
+  function adjacentStage(delta: -1 | 1) {
+    const current = STAGE_DEFINITIONS.findIndex(
+      (stage) => stage.id === activeStage,
+    );
+    const next = STAGE_DEFINITIONS[current + delta];
+    if (next) jumpToStage(next.id);
   }
 
   return (
@@ -420,8 +520,14 @@ export default function HalftoneStudio() {
         </nav>
       </header>
 
-      <section className="workspace">
-        <aside className="inspector">
+      <section
+        className={`workspace ${inspectorCollapsed ? "inspector-collapsed" : ""}`}
+      >
+        <aside
+          className={`inspector ${inspectorCollapsed ? "is-collapsed" : ""}`}
+          data-testid="inspector"
+          data-collapsed={inspectorCollapsed ? "true" : "false"}
+        >
           <StageSpine
             stages={stages}
             active={activeStage}
@@ -432,12 +538,29 @@ export default function HalftoneStudio() {
               <span className="eyebrow">Recipe</span>
               <h1>Build your separation</h1>
             </div>
-            <button className="icon-button" title="Collapse panel" aria-label="Collapse panel">
-              <PanelLeftClose size={18} />
+            <button
+              className="icon-button"
+              title={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
+              aria-label={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
+              aria-expanded={!inspectorCollapsed}
+              onClick={() => setInspectorCollapsed((current) => !current)}
+            >
+              {inspectorCollapsed ? (
+                <PanelLeftOpen size={18} />
+              ) : (
+                <PanelLeftClose size={18} />
+              )}
             </button>
           </div>
 
-          <section className="control-step" id="artwork">
+          <StagePanel
+            id="artwork"
+            number="01"
+            label="Artwork"
+            description="Confirm the source file before building the screen."
+            active={activeStage === "artwork"}
+            onNext={() => adjacentStage(1)}
+          >
             <button className="upload-card" onClick={() => fileRef.current?.click()}>
               <span className="upload-icon">
                 <ImagePlus size={20} />
@@ -448,9 +571,18 @@ export default function HalftoneStudio() {
               </span>
               <span className="replace-label">Replace</span>
             </button>
-          </section>
+          </StagePanel>
 
-          <section className="control-step" id="screen">
+          <StagePanel
+            id="screen"
+            number="02"
+            label="Screen"
+            description="Set the dot geometry and tonal response."
+            active={activeStage === "screen"}
+            onBack={() => adjacentStage(-1)}
+            onNext={() => adjacentStage(1)}
+            onReset={resetScreen}
+          >
             <div className="field-grid">
               <label className="select-field">
                 <span>Dot shape</span>
@@ -477,6 +609,7 @@ export default function HalftoneStudio() {
                 max={64}
                 step={1}
                 unit="px"
+                defaultValue={DEFAULT_SETTINGS.cellSize}
                 hint="At 240 DPI, 16 px yields about 15 LPI; 4 px yields about 60 LPI."
                 onChange={(value) => updateSetting("cellSize", value)}
               />
@@ -488,6 +621,7 @@ export default function HalftoneStudio() {
                 max={2}
                 step={0.05}
                 unit="×"
+                defaultValue={DEFAULT_SETTINGS.contrast}
                 hint="Expands or compresses the tonal range before dots are built."
                 onChange={(value) => updateSetting("contrast", value)}
               />
@@ -499,20 +633,39 @@ export default function HalftoneStudio() {
                 max={30}
                 step={1}
                 unit="%"
+                defaultValue={DEFAULT_SETTINGS.exposure * 100}
                 hint="Shifts overall coverage toward more ink or more paper."
                 onChange={(value) => updateSetting("exposure", value / 100)}
               />
             </div>
-          </section>
+          </StagePanel>
 
-          <section className="control-step" id="separation">
+          <StagePanel
+            id="separation"
+            number="03"
+            label="Separation"
+            description="Check each process plate and its screen angle."
+            active={activeStage === "separation"}
+            onBack={() => adjacentStage(-1)}
+            onNext={() => adjacentStage(1)}
+            onReset={resetSeparation}
+          >
             <p className="control-note">
               Set each 0–359° screen angle in the persistent plate rail beside
               the proof.
             </p>
-          </section>
+          </StagePanel>
 
-          <section className="control-step final-step" id="output">
+          <StagePanel
+            id="output"
+            number="04"
+            label="Output"
+            description="Finish the plate package and press handoff."
+            active={activeStage === "output"}
+            onBack={() => adjacentStage(-1)}
+            onReset={resetOutput}
+            final
+          >
             <label className="toggle-row">
               <span>
                 <strong>Registration marks</strong>
@@ -543,10 +696,71 @@ export default function HalftoneStudio() {
               max={100}
               step={1}
               unit="%"
+              defaultValue={DEFAULT_SETTINGS.opacity * 100}
               hint="Changes the opacity of every plate in the composite proof."
               onChange={(value) => updateSetting("opacity", value / 100)}
             />
-          </section>
+            <section className="preflight-card" aria-labelledby="preflight-title">
+              <header className="preflight-heading">
+                <span>
+                  <ClipboardCheck size={16} aria-hidden="true" />
+                  <strong id="preflight-title">Output preflight</strong>
+                </span>
+                <span data-testid="preflight-count">
+                  {preflightReviewCount === 0
+                    ? "No visible omissions"
+                    : `${preflightReviewCount} to review`}
+                </span>
+              </header>
+              <ul className="preflight-list">
+                <PreflightItem
+                  review={hiddenPlates.length > 0}
+                  label="Plate visibility"
+                  value={
+                    hiddenPlates.length === 0
+                      ? "4/4 enabled"
+                      : `${hiddenPlates
+                          .map((plate) => PLATE_META[plate].short)
+                          .join(", ")} hidden`
+                  }
+                />
+                <PreflightItem
+                  review={sharedAngleGroups.length > 0}
+                  label="Screen angles"
+                  value={
+                    sharedAngleGroups.length === 0
+                      ? "All four angles are distinct"
+                      : sharedAngleGroups
+                          .map(
+                            ([angle, plates]) =>
+                              `${plates
+                                .map((plate) => PLATE_META[plate].short)
+                                .join("/")} share ${angle}°`,
+                          )
+                          .join(" · ")
+                  }
+                />
+                <PreflightItem
+                  review={!registration}
+                  label="Registration"
+                  value={registration ? "Marks included" : "Off — confirm before film"}
+                />
+                <PreflightItem
+                  review={settings.invert}
+                  label="Dot polarity"
+                  value={settings.invert ? "Inverted — confirm" : "Standard positive"}
+                />
+              </ul>
+              <button
+                type="button"
+                className="preflight-copy"
+                onClick={copyJobTicket}
+              >
+                <Copy size={14} aria-hidden="true" />
+                Copy job ticket
+              </button>
+            </section>
+          </StagePanel>
         </aside>
 
         <section
@@ -670,6 +884,8 @@ export default function HalftoneStudio() {
                 max={110}
                 step={1}
                 unit="%"
+                defaultValue={76}
+                showSlider={false}
                 hint="Changes only the proof view, never the exported artwork."
                 onChange={setZoom}
               />
@@ -733,6 +949,104 @@ export default function HalftoneStudio() {
 
       <SessionBadge />
     </main>
+  );
+}
+
+type StagePanelProps = {
+  id: StudioStageId;
+  number: string;
+  label: string;
+  description: string;
+  active: boolean;
+  final?: boolean;
+  onBack?: () => void;
+  onNext?: () => void;
+  onReset?: () => void;
+  children: ReactNode;
+};
+
+function StagePanel({
+  id,
+  number,
+  label,
+  description,
+  active,
+  final = false,
+  onBack,
+  onNext,
+  onReset,
+  children,
+}: StagePanelProps) {
+  return (
+    <section
+      className={`control-step ${final ? "final-step" : ""}`}
+      id={id}
+      role="tabpanel"
+      aria-labelledby={`stage-tab-${id}`}
+      data-testid={`stage-panel-${id}`}
+      hidden={!active}
+    >
+      <header className="control-step-heading">
+        <span className="step-number">{number}</span>
+        <span>
+          <strong>{label}</strong>
+          <small>{description}</small>
+        </span>
+        {onReset ? (
+          <button
+            type="button"
+            className="stage-reset-button"
+            aria-label={`Reset ${label} controls`}
+            title={`Reset ${label} controls`}
+            onClick={onReset}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+      </header>
+      <div className="control-step-body">{children}</div>
+      <nav className="control-step-nav" aria-label={`${label} stage navigation`}>
+        {onBack ? (
+          <button type="button" className="stage-nav-button" onClick={onBack}>
+            Previous
+          </button>
+        ) : (
+          <span />
+        )}
+        {onNext ? (
+          <button type="button" className="stage-nav-button" onClick={onNext}>
+            Next stage
+          </button>
+        ) : null}
+      </nav>
+    </section>
+  );
+}
+
+function PreflightItem({
+  review,
+  label,
+  value,
+}: {
+  review: boolean;
+  label: string;
+  value: string;
+}) {
+  return (
+    <li
+      className={review ? "needs-review" : ""}
+      data-status={review ? "review" : "clear"}
+    >
+      {review ? (
+        <AlertTriangle size={14} aria-hidden="true" />
+      ) : (
+        <Check size={14} aria-hidden="true" />
+      )}
+      <span>
+        <strong>{label}</strong>
+        <small>{value}</small>
+      </span>
+    </li>
   );
 }
 

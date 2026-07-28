@@ -11,16 +11,20 @@ type Props = {
   onJump: (id: string) => void;
 };
 
-/** §7: the four stages stay visible with completion state and jump-to. */
+/** Persistent, directly selectable stages for the inspector tab panels. */
 export default function StageSpine({ stages, active, onJump }: Props) {
   return (
-    <nav className="stage-spine" aria-label="Stages">
+    <nav className="stage-spine" aria-label="Studio stages" role="tablist">
       {stages.map((stage) => (
         <button
           key={stage.id}
+          id={`stage-tab-${stage.id}`}
           type="button"
+          role="tab"
           data-testid={`stage-${stage.id}`}
           data-complete={stage.complete ? "true" : "false"}
+          aria-controls={stage.id}
+          aria-selected={stage.id === active}
           className={[
             "stage-step",
             stage.complete ? "is-complete" : "",
@@ -29,6 +33,7 @@ export default function StageSpine({ stages, active, onJump }: Props) {
             .filter(Boolean)
             .join(" ")}
           aria-current={stage.id === active ? "step" : undefined}
+          title={`Open ${stage.label} controls`}
           onClick={() => onJump(stage.id)}
         >
           <span className="stage-number">{stage.number}</span>

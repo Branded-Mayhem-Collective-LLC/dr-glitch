@@ -233,6 +233,7 @@ test.describe("typed numerics", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("canvas");
+    await page.getByTestId("stage-screen").click();
   });
 
   test("cell size accepts a typed value", async ({ page }) => {
@@ -292,7 +293,7 @@ test.describe("typed numerics", () => {
     expect(box!.height).toBeGreaterThanOrEqual(24);
   });
 
-  test("numeric labels support coarse drag and Shift fine-adjust", async ({
+  test("numeric labels scrub normally and Shift accelerates by 10×", async ({
     page,
   }) => {
     const field = page.getByTestId("numeric-cellSize");
@@ -312,10 +313,60 @@ test.describe("typed numerics", () => {
     await page.keyboard.down("Shift");
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(x + 8, y);
+    await page.mouse.move(x + 4, y);
     await page.mouse.up();
     await page.keyboard.up("Shift");
-    await expect(field).toHaveValue("14");
+    expect(Number(await field.inputValue())).toBeGreaterThanOrEqual(50);
+  });
+
+  test("the number itself supports click-drag scrubbing", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const scrub = page.getByTestId("numeric-cellSize-scrub");
+    const box = await scrub.boundingBox();
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 5, y);
+    await page.mouse.up();
+
+    await expect(field).toHaveValue("17");
+  });
+
+  test("Alt/Option scrubs at 0.1× and arrow keys nudge predictably", async ({
+    page,
+  }) => {
+    const field = page.getByTestId("numeric-contrast");
+    const scrub = page.getByTestId("numeric-contrast-scrub");
+    const box = await scrub.boundingBox();
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+
+    await page.keyboard.down("Alt");
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 10, y);
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await expect(field).toHaveValue("1.05");
+
+    await field.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(field).toHaveValue("1.1");
+    await page.keyboard.press("Shift+ArrowUp");
+    await expect(field).toHaveValue("1.6");
+  });
+
+  test("left-panel numerics expose synchronized sliders", async ({ page }) => {
+    const field = page.getByTestId("numeric-cellSize");
+    const slider = page.getByTestId("numeric-cellSize-slider");
+    await expect(slider).toBeVisible();
+    await slider.fill("24");
+    await expect(field).toHaveValue("24");
+
+    await page.getByTestId("stage-output").click();
+    await expect(page.getByTestId("numeric-opacity-slider")).toBeVisible();
   });
 
   test("numeric units and consequence hints are announced with the field", async ({
@@ -473,9 +524,36 @@ test.describe("stage spine and keyboard", () => {
     );
   });
 
-  test("clicking a stage jumps to its inspector section", async ({ page }) => {
-    await page.getByTestId("stage-output").click();
-    await expect(page.locator("#output")).toBeInViewport();
+  test("clicking a stage switches to a distinct inspector panel", async ({
+    page,
+  }) => {
+    const ids = ["artwork", "screen", "separation", "output"] as const;
+    for (const id of ids) {
+      await page.getByTestId(`stage-${id}`).click();
+      await expect(page.getByTestId(`stage-${id}`)).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.getByTestId(`stage-panel-${id}`)).toBeVisible();
+      for (const other of ids.filter((candidate) => candidate !== id)) {
+        await expect(page.getByTestId(`stage-panel-${other}`)).toBeHidden();
+      }
+    }
+  });
+
+  test("inspector collapse and stage selection both change the workspace", async ({
+    page,
+  }) => {
+    const inspector = page.getByTestId("inspector");
+    await page.getByRole("button", { name: "Collapse panel" }).click();
+    await expect(inspector).toHaveAttribute("data-collapsed", "true");
+    await expect(
+      page.getByRole("button", { name: "Expand panel" }),
+    ).toBeVisible();
+
+    await page.getByTestId("stage-screen").click();
+    await expect(inspector).toHaveAttribute("data-collapsed", "false");
+    await expect(page.getByTestId("stage-panel-screen")).toBeVisible();
   });
 
   test("Space activates a focused stage control without arming pan", async ({
@@ -487,7 +565,7 @@ test.describe("stage spine and keyboard", () => {
     await page.keyboard.press("Space");
 
     await expect(output).toHaveAttribute("aria-current", "step");
-    await expect(page.locator("#output")).toBeInViewport();
+    await expect(page.getByTestId("stage-panel-output")).toBeVisible();
     await expect(stage).toHaveAttribute("data-pan-armed", "false");
   });
 
@@ -520,6 +598,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("shortcuts do not fire while typing in a field", async ({ page }) => {
+    await page.getByTestId("stage-screen").click();
     const field = page.getByTestId("numeric-cellSize");
     await field.click();
     await field.fill("");
@@ -557,9 +636,94 @@ test.describe("stage spine and keyboard", () => {
 
   test("space does not arm panning while typing", async ({ page }) => {
     const stage = page.getByTestId("stage-surface");
+    await page.getByTestId("stage-screen").click();
     await page.getByTestId("numeric-cellSize").click();
     await page.keyboard.down("Space");
     await expect(stage).toHaveAttribute("data-pan-armed", "false");
     await page.keyboard.up("Space");
+  });
+});
+
+test.describe("press workflow preflight", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+  });
+
+  test("screen controls reset together without touching the engine", async ({
+    page,
+  }) => {
+    await page.getByTestId("stage-screen").click();
+    await page.getByTestId("numeric-cellSize-slider").fill("24");
+    await page.locator(".select-field select").selectOption("square");
+
+    await page.getByRole("button", { name: "Reset Screen controls" }).click();
+
+    await expect(page.getByTestId("numeric-cellSize")).toHaveValue("12");
+    await expect(page.locator(".select-field select")).toHaveValue("round");
+    await expect(page.getByRole("status")).toContainText("Screen controls reset");
+  });
+
+  test("preflight names hidden plates and missing registration marks", async ({
+    page,
+  }) => {
+    await page.keyboard.down("Alt");
+    await page.getByTestId("ink-chip-cyan").click();
+    await page.keyboard.up("Alt");
+
+    await page.getByTestId("stage-output").click();
+    await page
+      .getByRole("checkbox", { name: /Registration marks/i })
+      .uncheck();
+
+    await expect(page.getByTestId("preflight-count")).toContainText(
+      "2 to review",
+    );
+    await expect(
+      page.locator(".preflight-list li[data-status='review']"),
+    ).toHaveCount(2);
+    await expect(page.locator(".preflight-list")).toContainText("C hidden");
+    await expect(page.locator(".preflight-list")).toContainText(
+      "Off — confirm before film",
+    );
+  });
+
+  test("preflight reports exact shared screen angles without claiming certainty", async ({
+    page,
+  }) => {
+    const yellow = page.getByTestId("ink-angle-yellow");
+    await yellow.fill("15");
+    await yellow.press("Enter");
+    await page.getByTestId("stage-output").click();
+
+    await expect(page.locator(".preflight-list")).toContainText(
+      "C/Y share 15°",
+    );
+  });
+
+  test("job ticket copies the visible recipe for press handoff", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as typeof window & { __copiedTicket?: string }).__copiedTicket =
+              text;
+          },
+        },
+      });
+    });
+    await page.getByTestId("stage-output").click();
+    await page.getByRole("button", { name: "Copy job ticket" }).click();
+
+    const ticket = await page.evaluate(
+      () => (window as typeof window & { __copiedTicket?: string }).__copiedTicket,
+    );
+    expect(ticket).toContain("DR.GLITCH JOB TICKET");
+    expect(ticket).toContain("Angles: C 15° · M 75° · Y 0° · K 45°");
+    expect(ticket).toContain("Registration marks: Included");
+    await expect(page.getByRole("status")).toContainText("Job ticket copied");
   });
 });

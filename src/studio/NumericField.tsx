@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 
 type Props = {
   id: string;
@@ -9,6 +15,8 @@ type Props = {
   step: number;
   unit?: string;
   hint?: string;
+  defaultValue?: number;
+  showSlider?: boolean;
   onChange: (value: number) => void;
 };
 
@@ -16,9 +24,29 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function decimalsFor(step: number) {
+  const value = String(step);
+  return value.includes(".") ? value.split(".")[1].length : 0;
+}
+
+function quantize(value: number, min: number, max: number, step: number) {
+  const precision = Math.min(4, decimalsFor(step));
+  const snapped = min + Math.round((value - min) / step) * step;
+  return Number(clamp(snapped, min, max).toFixed(precision));
+}
+
+function roundClamp(value: number, min: number, max: number, step: number) {
+  const precision = Math.min(4, decimalsFor(step));
+  return Number(clamp(value, min, max).toFixed(precision));
+}
+
 /**
- * §7: type-or-drag. A typed input is the primary affordance; dragging the
- * label is a secondary shortcut for rough adjustment.
+ * One numeric, three synchronized affordances: type, scrub, or slide.
+ *
+ * Adobe's scrubby-slider convention is preserved on the label and extended
+ * to the value itself: drag horizontally, hold Shift for 10× movement, and
+ * hold Alt/Option for 0.1× precision. A click without movement selects the
+ * value for direct typing.
  */
 export default function NumericField({
   id,
@@ -29,16 +57,25 @@ export default function NumericField({
   step,
   unit,
   hint,
+  defaultValue,
+  showSlider = true,
   onChange,
 }: Props) {
   const [draft, setDraft] = useState(String(value));
-  const dragState = useRef<{ startX: number; startValue: number } | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragState = useRef<{
+    startX: number;
+    startValue: number;
+    moved: boolean;
+  } | null>(null);
   const describedBy = [
     unit ? `numeric-${id}-unit` : null,
     hint ? `numeric-${id}-hint` : null,
   ]
     .filter(Boolean)
     .join(" ");
+  const sliderPercent = ((clamp(value, min, max) - min) / (max - min)) * 100;
 
   useEffect(() => {
     setDraft(String(value));
@@ -56,46 +93,109 @@ export default function NumericField({
       return;
     }
 
-    const next = clamp(parsed, min, max);
+    const next = quantize(parsed, min, max, step);
     setDraft(String(next));
     onChange(next);
   }
 
-  function onPointerDown(event: PointerEvent<HTMLSpanElement>) {
-    dragState.current = { startX: event.clientX, startValue: value };
+  function modifierStep(event: { shiftKey: boolean; altKey: boolean }) {
+    if (event.shiftKey) return step * 10;
+    if (event.altKey) return step / 10;
+    return step;
+  }
+
+  function adjustBy(direction: -1 | 1, event: KeyboardEvent<HTMLInputElement>) {
+    const activeStep = modifierStep(event);
+    const next = roundClamp(
+      value + direction * activeStep,
+      min,
+      max,
+      activeStep,
+    );
+    setDraft(String(next));
+    onChange(next);
+  }
+
+  function onScrubStart(event: PointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    dragState.current = {
+      startX: event.clientX,
+      startValue: value,
+      moved: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function onPointerMove(event: PointerEvent<HTMLSpanElement>) {
+  function onScrubMove(event: PointerEvent<HTMLElement>) {
     const state = dragState.current;
     if (!state) return;
 
     const delta = event.clientX - state.startX;
-    const scale = event.shiftKey ? 0.25 : 1;
-    onChange(clamp(state.startValue + delta * step * scale, min, max));
+    if (!state.moved && Math.abs(delta) < 3) return;
+    state.moved = true;
+    setScrubbing(true);
+    const activeStep = modifierStep(event);
+    const next = roundClamp(
+      state.startValue + delta * activeStep,
+      min,
+      max,
+      activeStep,
+    );
+    setDraft(String(next));
+    onChange(next);
   }
 
-  function onPointerUp(event: PointerEvent<HTMLSpanElement>) {
+  function finishScrub(event: PointerEvent<HTMLElement>, cancelled = false) {
+    const state = dragState.current;
+    if (!state) return;
     dragState.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    setScrubbing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!cancelled && !state.moved) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
   }
 
   return (
-    <div className="numeric-field">
+    <div
+      className={`numeric-field ${scrubbing ? "is-scrubbing" : ""}`}
+      data-testid={`numeric-${id}-field`}
+    >
       <label className="numeric-label" htmlFor={`numeric-${id}`}>
         <span
           className="numeric-grip"
           data-testid={`numeric-${id}-grip`}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
+          title="Drag to adjust · Shift 10× · Alt/Option 0.1×"
+          onPointerDown={onScrubStart}
+          onPointerMove={onScrubMove}
+          onPointerUp={(event) => finishScrub(event)}
+          onPointerCancel={(event) => finishScrub(event, true)}
+          onDoubleClick={() => {
+            if (defaultValue === undefined) return;
+            const next = quantize(defaultValue, min, max, step);
+            setDraft(String(next));
+            onChange(next);
+          }}
           role="presentation"
         >
           {label}
         </span>
       </label>
-      <span className="numeric-entry">
+      <span
+        className="numeric-entry"
+        data-testid={`numeric-${id}-scrub`}
+        title="Click to type · Drag to adjust · Shift 10× · Alt/Option 0.1×"
+        onPointerDown={onScrubStart}
+        onPointerMove={onScrubMove}
+        onPointerUp={(event) => finishScrub(event)}
+        onPointerCancel={(event) => finishScrub(event, true)}
+      >
         <input
+          ref={inputRef}
           id={`numeric-${id}`}
           data-testid={`numeric-${id}`}
           className="numeric-input"
@@ -106,8 +206,18 @@ export default function NumericField({
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
-            if (event.key === "Enter") commit();
-            if (event.key === "Escape") setDraft(String(value));
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              adjustBy(1, event);
+            } else if (event.key === "ArrowDown") {
+              event.preventDefault();
+              adjustBy(-1, event);
+            } else if (event.key === "Enter") {
+              commit();
+            } else if (event.key === "Escape") {
+              setDraft(String(value));
+              event.currentTarget.blur();
+            }
           }}
         />
         {unit ? (
@@ -120,6 +230,28 @@ export default function NumericField({
           </span>
         ) : null}
       </span>
+      {showSlider ? (
+        <span className="numeric-slider-shell">
+          <span
+            className="numeric-slider-fill"
+            style={{ width: `${sliderPercent}%` }}
+            aria-hidden="true"
+          />
+          <input
+            className="numeric-slider"
+            data-testid={`numeric-${id}-slider`}
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            aria-label={`${label} slider`}
+            aria-valuetext={`${value}${unit ? ` ${unit}` : ""}`}
+            aria-describedby={describedBy || undefined}
+            onChange={(event) => onChange(Number(event.target.value))}
+          />
+        </span>
+      ) : null}
       {hint ? (
         <p id={`numeric-${id}-hint`} className="numeric-hint">
           {hint}
