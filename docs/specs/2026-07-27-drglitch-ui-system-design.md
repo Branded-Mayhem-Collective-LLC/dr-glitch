@@ -132,9 +132,10 @@ The separation becomes the navigation.
 
 ### 6.1 Ink rail (new)
 A vertical rail of four solid C/M/Y/K chips, visible only while the
-**Separation** stage is active and fixed while the proof scrolls. Click a chip =
-**solo that plate**. Modifier-click = toggle visibility. Solo is the single
-largest speed win in the redesign and does not exist today.
+**Separation** stage is active. It lives inside the existing left inspector,
+never in a second proof-side panel. Click a chip = **solo that plate**.
+Modifier-click = toggle visibility. Solo is the single largest speed win in the
+redesign and does not exist today.
 
 ### 6.2 Channel tinting (the law that makes it legible)
 When a plate is active, **every active affordance in the inspector renders in that

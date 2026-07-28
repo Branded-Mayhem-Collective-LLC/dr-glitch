@@ -1208,7 +1208,9 @@ select:focus-visible {
   padding: 0 16px;
 }
 
-.active-plate-label {
+.separation-viewing-label {
+  display: block;
+  margin-bottom: 8px;
   color: var(--paper);
   font-family: var(--font-ui);
   font-size: 10px;
@@ -1218,8 +1220,7 @@ select:focus-visible {
 }
 
 /*
- * The Separation-stage ink rail stays fixed while .canvas-scroll scrolls
- * the proof. Both occupy canvas-stage's middle grid row.
+ * The proof occupies canvas-stage's middle grid row and scrolls independently.
  */
 .stage-body {
   min-width: 0;
@@ -1287,18 +1288,21 @@ select:focus-visible {
 }
 
 /*
- * §6.1 Ink rail — visible only in Separation and fixed while present.
+ * §6.1 Ink rail — integrated into the left Separation controls.
  * §9: hit targets >=32px; identity uses swatch + letter + angle, never hue alone.
  * §5: zero radius, no gradients, hard 2px/2px offset shadow only.
  */
 .ink-rail {
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
   gap: 0;
-  border-right: 1px solid var(--stage-rule);
-  background: var(--stage-2);
-  overflow-y: auto;
+  width: 100%;
+  border-top: 1px solid var(--stage-rule);
+  background: transparent;
+}
+
+.ink-rail > .ink-chip {
+  width: 100%;
 }
 
 .ink-chip {

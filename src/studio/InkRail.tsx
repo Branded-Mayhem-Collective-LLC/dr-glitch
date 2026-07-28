@@ -118,7 +118,7 @@ function InlineAngleField({
 }
 
 /**
- * §6.1 Ink rail. Separation-stage C/M/Y/K + composite strip.
+ * §6.1 Ink rail. C/M/Y/K + composite controls inside the left Separation step.
  * Click a chip = solo that plate. Alt-click or Meta-click = toggle its
  * visibility without changing the soloed view.
  *

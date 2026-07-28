@@ -553,17 +553,22 @@ test.describe("stage spine and keyboard", () => {
     }
   });
 
-  test("plate controls and the viewing label exist only in Separation", async ({
+  test("plate controls stay inside the left Separation step only", async ({
     page,
   }) => {
     for (const id of ["artwork", "screen", "output"]) {
       await page.getByTestId(`stage-${id}`).click();
-      await expect(page.locator(".ink-rail")).toHaveCount(0);
-      await expect(page.getByTestId("active-plate-label")).toHaveCount(0);
+      await expect(page.locator(".ink-rail")).toBeHidden();
+      await expect(page.getByTestId("active-plate-label")).toBeHidden();
     }
 
     await openSeparation(page);
-    await expect(page.locator(".ink-rail")).toBeVisible();
+    await expect(
+      page.getByTestId("stage-panel-separation").locator(".ink-rail"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("stage-surface").locator(".ink-rail"),
+    ).toHaveCount(0);
     await expect(page.getByTestId("active-plate-label")).toContainText(
       "Viewing: Composite",
     );

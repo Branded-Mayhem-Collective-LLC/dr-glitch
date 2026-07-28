@@ -650,10 +650,22 @@ export default function HalftoneStudio() {
             onNext={() => adjacentStage(1)}
             onReset={resetSeparation}
           >
-            <p className="control-note">
-              Use the plate rail beside the proof to solo, hide, and set each
-              0–359° screen angle.
-            </p>
+            <span
+              className="separation-viewing-label"
+              data-testid="active-plate-label"
+            >
+              Viewing:{" "}
+              {activePlate === "composite"
+                ? "Composite"
+                : PLATE_META[activePlate].label}
+            </span>
+            <InkRail
+              activePlate={activePlate}
+              settings={settings}
+              onSolo={handleSolo}
+              onToggleVisible={handleToggleVisible}
+              onAngleChange={handleAngleChange}
+            />
           </StagePanel>
 
           <StagePanel
@@ -817,17 +829,6 @@ export default function HalftoneStudio() {
           }}
         >
           <div className="stage-toolbar">
-            {activeStage === "separation" && (
-              <span
-                className="active-plate-label"
-                data-testid="active-plate-label"
-              >
-                Viewing:{" "}
-                {activePlate === "composite"
-                  ? "Composite"
-                  : PLATE_META[activePlate].label}
-              </span>
-            )}
             <div className="view-status">
               <Sparkles size={14} />
               <span>Live browser preview</span>
@@ -835,16 +836,6 @@ export default function HalftoneStudio() {
           </div>
 
           <div className="stage-body">
-            {activeStage === "separation" && (
-              <InkRail
-                activePlate={activePlate}
-                settings={settings}
-                onSolo={handleSolo}
-                onToggleVisible={handleToggleVisible}
-                onAngleChange={handleAngleChange}
-              />
-            )}
-
             <div className="canvas-scroll">
               <div
                 className="artboard-wrap"
