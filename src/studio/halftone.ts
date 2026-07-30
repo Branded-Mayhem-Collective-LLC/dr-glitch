@@ -1,3 +1,9 @@
+import {
+  calculateArtworkPlacement,
+  getSheetPixelDimensions,
+  type DocumentSettings,
+} from "./document-model";
+
 export type Plate = "composite" | "cyan" | "magenta" | "yellow" | "black";
 export type DotShape = "round" | "square" | "diamond" | "line";
 
@@ -26,17 +32,53 @@ export const PLATE_META = {
   black: { label: "Black", short: "K", color: "#202226" },
 } as const;
 
-type RenderOptions = {
+export const MAX_EXPORT_GRID_POINTS = 2_000_000;
+
+export type RenderOptions = {
   plate?: Plate;
   width?: number;
   height?: number;
   paper?: string;
   registration?: boolean;
   monochromePlate?: boolean;
+  document?: DocumentSettings;
+  preview?: boolean;
 };
 
 export function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
+}
+
+export function estimateGridPoints(
+  width: number,
+  height: number,
+  cellSize: number,
+  angleDegrees: number,
+) {
+  const angle = (angleDegrees * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(angle));
+  const sin = Math.abs(Math.sin(angle));
+  const effectiveWidth = width * cos + height * sin;
+  const effectiveHeight = width * sin + height * cos;
+  const cell = Math.max(1e-6, cellSize);
+  const columns = Math.max(1, Math.ceil(effectiveWidth / cell));
+  const rows = Math.max(1, Math.ceil(effectiveHeight / cell));
+
+  return columns * rows;
+}
+
+export function rgbToCmyk(red: number, green: number, blue: number) {
+  const cyan = 1 - clamp(red, 0, 255) / 255;
+  const magenta = 1 - clamp(green, 0, 255) / 255;
+  const yellow = 1 - clamp(blue, 0, 255) / 255;
+  const black = Math.min(cyan, magenta, yellow);
+
+  return {
+    cyan: clamp(cyan - black),
+    magenta: clamp(magenta - black),
+    yellow: clamp(yellow - black),
+    black,
+  };
 }
 
 export function coverageFor(
@@ -46,13 +88,12 @@ export function coverageFor(
   blue: number,
   settings: HalftoneSettings,
 ) {
-  let value = 0;
-  if (plate === "cyan") value = 1 - red / 255;
-  if (plate === "magenta") value = 1 - green / 255;
-  if (plate === "yellow") value = 1 - blue / 255;
-  if (plate === "black") {
-    value = Math.min(1 - red / 255, 1 - green / 255, 1 - blue / 255);
-  }
+  const luminance = 0.299 * red + 0.587 * green + 0.114 * blue;
+  if (luminance >= 250) return 0;
+
+  let value = rgbToCmyk(red, green, blue)[plate];
+
+  if (value === 0 && !settings.invert) return 0;
 
   value = (value - 0.5) * settings.contrast + 0.5 + settings.exposure;
   value = clamp(value);
@@ -128,6 +169,7 @@ function renderPlateDots(
   sourceWidth: number,
   sourceHeight: number,
   scale: number,
+  minimumCellSize: number,
   monochrome: boolean,
 ) {
   if (!settings.visible[plate]) return;
@@ -137,7 +179,7 @@ function renderPlateDots(
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   const diagonal = Math.ceil(Math.hypot(width, height));
-  const cell = Math.max(3, settings.cellSize * scale);
+  const cell = Math.max(minimumCellSize, settings.cellSize * scale);
   const half = diagonal / 2 + cell;
   const centerX = width / 2;
   const centerY = height / 2;
@@ -177,6 +219,75 @@ function renderPlateDots(
   context.restore();
 }
 
+function getDocumentTargetDimensions(
+  documentWidth: number,
+  documentHeight: number,
+  width?: number,
+  height?: number,
+) {
+  let scale = 1;
+
+  if (width !== undefined && height !== undefined) {
+    scale = Math.min(width / documentWidth, height / documentHeight);
+  } else if (width !== undefined) {
+    scale = width / documentWidth;
+  } else if (height !== undefined) {
+    scale = height / documentHeight;
+  }
+
+  if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+
+  return {
+    width: Math.max(1, Math.round(documentWidth * scale)),
+    height: Math.max(1, Math.round(documentHeight * scale)),
+  };
+}
+
+function drawDocumentArtwork(
+  context: CanvasRenderingContext2D,
+  source: HTMLImageElement | HTMLCanvasElement,
+  sourceWidth: number,
+  sourceHeight: number,
+  document: DocumentSettings,
+  documentWidth: number,
+  documentHeight: number,
+  sampleWidth: number,
+  sampleHeight: number,
+) {
+  const placement = calculateArtworkPlacement({
+    sourceWidth,
+    sourceHeight,
+    sheetWidth: documentWidth,
+    sheetHeight: documentHeight,
+    scalePercent: document.scalePercent,
+    offsetX: document.offsetX,
+    offsetY: document.offsetY,
+  });
+  const scaleX = sampleWidth / documentWidth;
+  const scaleY = sampleHeight / documentHeight;
+  const x = placement.x * scaleX;
+  const y = placement.y * scaleY;
+  const width = placement.width * scaleX;
+  const height = placement.height * scaleY;
+
+  context.save();
+
+  if (document.mirrorImage) {
+    if (document.mirrorDirection === "horizontal") {
+      context.translate(x + width, y);
+      context.scale(-1, 1);
+    } else {
+      context.translate(x, y + height);
+      context.scale(1, -1);
+    }
+    context.drawImage(source, 0, 0, width, height);
+  } else {
+    context.drawImage(source, x, y, width, height);
+  }
+
+  context.restore();
+}
+
 export function renderHalftone(
   source: HTMLImageElement | HTMLCanvasElement,
   target: HTMLCanvasElement,
@@ -187,8 +298,24 @@ export function renderHalftone(
     source instanceof HTMLImageElement ? source.naturalWidth : source.width;
   const naturalHeight =
     source instanceof HTMLImageElement ? source.naturalHeight : source.height;
-  const width = Math.max(1, Math.round(options.width ?? naturalWidth));
-  const height = Math.max(1, Math.round(options.height ?? naturalHeight));
+  const documentDimensions = options.document
+    ? getSheetPixelDimensions(
+        options.document.sheetSize,
+        options.document.orientation,
+      )
+    : null;
+  const targetDimensions = documentDimensions
+    ? getDocumentTargetDimensions(
+        documentDimensions.width,
+        documentDimensions.height,
+        options.width,
+        options.height,
+      )
+    : {
+        width: Math.max(1, Math.round(options.width ?? naturalWidth)),
+        height: Math.max(1, Math.round(options.height ?? naturalHeight)),
+      };
+  const { width, height } = targetDimensions;
   const plate = options.plate ?? "composite";
 
   target.width = width;
@@ -200,21 +327,48 @@ export function renderHalftone(
   context.fillRect(0, 0, width, height);
 
   const sampleCanvas = document.createElement("canvas");
-  const sampleScale = Math.min(1, 1100 / Math.max(width, height));
+  const sampleScale = options.preview
+    ? Math.min(1, 1100 / Math.max(width, height))
+    : 1;
   sampleCanvas.width = Math.max(1, Math.round(width * sampleScale));
   sampleCanvas.height = Math.max(1, Math.round(height * sampleScale));
   const sampleContext = sampleCanvas.getContext("2d", {
     willReadFrequently: true,
   });
   if (!sampleContext) return;
-  sampleContext.drawImage(source, 0, 0, sampleCanvas.width, sampleCanvas.height);
+
+  if (options.document && documentDimensions) {
+    sampleContext.fillStyle = "#ffffff";
+    sampleContext.fillRect(0, 0, sampleCanvas.width, sampleCanvas.height);
+    drawDocumentArtwork(
+      sampleContext,
+      source,
+      naturalWidth,
+      naturalHeight,
+      options.document,
+      documentDimensions.width,
+      documentDimensions.height,
+      sampleCanvas.width,
+      sampleCanvas.height,
+    );
+  } else {
+    sampleContext.drawImage(source, 0, 0, sampleCanvas.width, sampleCanvas.height);
+  }
+
   const pixels = sampleContext.getImageData(
     0,
     0,
     sampleCanvas.width,
     sampleCanvas.height,
   );
-  const renderScale = width / naturalWidth;
+  const renderScale = documentDimensions
+    ? width / documentDimensions.width
+    : width / naturalWidth;
+  const minimumCellSize = documentDimensions
+    ? options.preview
+      ? 3
+      : 0.01
+    : 3;
 
   const activePlates = plate === "composite" ? PLATES : [plate];
   for (const activePlate of activePlates) {
@@ -228,6 +382,7 @@ export function renderHalftone(
       sampleCanvas.width,
       sampleCanvas.height,
       renderScale,
+      minimumCellSize,
       Boolean(options.monochromePlate && plate !== "composite"),
     );
   }

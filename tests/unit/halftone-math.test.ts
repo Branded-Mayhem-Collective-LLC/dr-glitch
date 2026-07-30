@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { clamp, coverageFor, type HalftoneSettings } from "../../src/studio/halftone";
+import {
+  MAX_EXPORT_GRID_POINTS,
+  clamp,
+  coverageFor,
+  estimateGridPoints,
+  rgbToCmyk,
+  type HalftoneSettings,
+} from "../../src/studio/halftone";
 
 const base: HalftoneSettings = {
   cellSize: 12,
@@ -40,9 +47,37 @@ describe("coverageFor", () => {
     expect(coverageFor("cyan", 255, 0, 0, inverted)).toBeCloseTo(1);
   });
 
+  it.each([
+    ["paper white", 255, 255, 255],
+    ["near-white paper", 250, 250, 250],
+    ["warm near-white paper", 255, 249, 255],
+  ] as const)(
+    "keeps %s at zero on every inverted plate",
+    (_name, red, green, blue) => {
+      const inverted = { ...base, invert: true };
+
+      for (const plate of ["cyan", "magenta", "yellow", "black"] as const) {
+        expect(coverageFor(plate, red, green, blue, inverted)).toBe(0);
+      }
+    },
+  );
+
+  it("still inverts a zero channel on non-white artwork", () => {
+    const inverted = { ...base, invert: true };
+    expect(coverageFor("cyan", 255, 0, 0, inverted)).toBe(1);
+  });
+
   it("clamps exposure overdrive into range", () => {
     const hot = { ...base, exposure: 5 };
-    expect(coverageFor("cyan", 128, 128, 128, hot)).toBe(1);
+    expect(coverageFor("cyan", 128, 255, 255, hot)).toBe(1);
+  });
+
+  it("does not reintroduce process color into neutral gray", () => {
+    const aggressive = { ...base, contrast: 4, exposure: 5 };
+
+    for (const plate of ["cyan", "magenta", "yellow"] as const) {
+      expect(coverageFor(plate, 128, 128, 128, aggressive)).toBe(0);
+    }
   });
 
   it("reads magenta from the green channel", () => {
@@ -60,5 +95,68 @@ describe("coverageFor", () => {
     expect(coverageFor("cyan", 0, 255, 255, flat)).toBeCloseTo(0.5);
     const punchy = { ...base, contrast: 2 };
     expect(coverageFor("cyan", 191, 255, 255, punchy)).toBeCloseTo(0.0, 1);
+  });
+});
+
+describe("rgbToCmyk", () => {
+  it("uses maximum GCR for black, neutral gray, and white", () => {
+    expect(rgbToCmyk(0, 0, 0)).toEqual({
+      cyan: 0,
+      magenta: 0,
+      yellow: 0,
+      black: 1,
+    });
+
+    const gray = rgbToCmyk(128, 128, 128);
+    expect(gray.cyan).toBe(0);
+    expect(gray.magenta).toBe(0);
+    expect(gray.yellow).toBe(0);
+    expect(gray.black).toBeCloseTo(1 - 128 / 255);
+
+    expect(rgbToCmyk(255, 255, 255)).toEqual({
+      cyan: 0,
+      magenta: 0,
+      yellow: 0,
+      black: 0,
+    });
+  });
+
+  it.each([
+    ["red", [255, 0, 0], [0, 1, 1, 0]],
+    ["green", [0, 255, 0], [1, 0, 1, 0]],
+    ["blue", [0, 0, 255], [1, 1, 0, 0]],
+    ["cyan", [0, 255, 255], [1, 0, 0, 0]],
+    ["magenta", [255, 0, 255], [0, 1, 0, 0]],
+    ["yellow", [255, 255, 0], [0, 0, 1, 0]],
+  ] as const)("separates saturated %s correctly", (_name, rgb, cmyk) => {
+    const result = rgbToCmyk(rgb[0], rgb[1], rgb[2]);
+    expect([
+      result.cyan,
+      result.magenta,
+      result.yellow,
+      result.black,
+    ]).toEqual(cmyk);
+  });
+});
+
+describe("estimateGridPoints", () => {
+  it.each([
+    ["unrotated bounds", 100, 50, 10, 0, 50],
+    ["rotated effective bounds", 100, 50, 10, 45, 121],
+    ["Dave parity at a right angle", 100, 50, 10, 90, 60],
+    ["minimum one point", 0, 0, 0, 30, 1],
+  ] as const)(
+    "matches Dave's estimator for %s",
+    (_name, width, height, cellSize, angle, expected) => {
+      expect(estimateGridPoints(width, height, cellSize, angle)).toBe(expected);
+    },
+  );
+
+  it("flags a dense 15×22 sheet above the export budget", () => {
+    const points = estimateGridPoints(3600, 5280, 4, 45);
+
+    expect(points).toBe(2_464_900);
+    expect(points).toBeGreaterThan(MAX_EXPORT_GRID_POINTS);
+    expect(MAX_EXPORT_GRID_POINTS).toBe(2_000_000);
   });
 });

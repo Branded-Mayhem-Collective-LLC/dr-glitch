@@ -32,13 +32,25 @@ import NumericField from "./NumericField";
 import StageSpine, { type Stage } from "./StageSpine";
 import { isInteractiveTarget, useStudioKeys } from "./useStudioKeys";
 import {
+  MAX_EXPORT_GRID_POINTS,
   createDemoArtwork,
+  estimateGridPoints,
   HalftoneSettings,
   PLATE_META,
   PLATES,
   Plate,
   renderHalftone,
 } from "./halftone";
+import {
+  DEFAULT_DOCUMENT_SETTINGS,
+  DOCUMENT_DPI,
+  type DocumentSettings,
+  getFitScalePercent,
+  getSheetPixelDimensions,
+  SHEET_SIZES,
+  type SheetSizeId,
+} from "./document-model";
+import { withPngDpi } from "./png-dpi";
 import {
   ChangeEvent,
   CSSProperties,
@@ -97,11 +109,15 @@ export default function HalftoneStudio() {
   );
   const [sourceName, setSourceName] = useState(`${PRODUCT_NAME} sample artwork`);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [documentSettings, setDocumentSettings] = useState<DocumentSettings>(
+    () => ({ ...DEFAULT_DOCUMENT_SETTINGS }),
+  );
   const [activePlate, setActivePlate] = useState<Plate>("composite");
   const [zoom, setZoom] = useState(76);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
+  const [placingArtwork, setPlacingArtwork] = useState(false);
   const [activeStage, setActiveStage] = useState<StudioStageId>("artwork");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [registration, setRegistration] = useState(true);
@@ -118,6 +134,14 @@ export default function HalftoneStudio() {
     panX: number;
     panY: number;
   } | null>(null);
+  const artworkPlacementStart = useRef<{
+    x: number;
+    y: number;
+    offsetX: number;
+    offsetY: number;
+    pixelsPerScreenX: number;
+    pixelsPerScreenY: number;
+  } | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setSource(createDemoArtwork()), 0);
@@ -126,21 +150,23 @@ export default function HalftoneStudio() {
 
   const render = useCallback(() => {
     if (!source || !canvasRef.current) return;
-    const sourceWidth =
-      source instanceof HTMLImageElement ? source.naturalWidth : source.width;
-    const sourceHeight =
-      source instanceof HTMLImageElement ? source.naturalHeight : source.height;
+    const sheet = getSheetPixelDimensions(
+      documentSettings.sheetSize,
+      documentSettings.orientation,
+    );
     const maxDimension = 980;
-    const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+    const scale = Math.min(1, maxDimension / Math.max(sheet.width, sheet.height));
     renderHalftone(source, canvasRef.current, settings, {
       plate: activePlate,
-      width: sourceWidth * scale,
-      height: sourceHeight * scale,
+      width: sheet.width * scale,
+      height: sheet.height * scale,
       paper: "#F4F1E9",
       registration,
       monochromePlate: true,
+      document: documentSettings,
+      preview: true,
     });
-  }, [activePlate, registration, settings, source]);
+  }, [activePlate, documentSettings, registration, settings, source]);
 
   useEffect(() => {
     if (renderFrame.current) cancelAnimationFrame(renderFrame.current);
@@ -202,7 +228,9 @@ export default function HalftoneStudio() {
     function reset() {
       setSpaceHeld(false);
       setPanning(false);
+      setPlacingArtwork(false);
       panStart.current = null;
+      artworkPlacementStart.current = null;
     }
 
     window.addEventListener("keydown", down);
@@ -252,11 +280,32 @@ export default function HalftoneStudio() {
     }
     return [...grouped.entries()].filter(([, plates]) => plates.length > 1);
   }, [settings.angles]);
+  const outputDimensions = getSheetPixelDimensions(
+    documentSettings.sheetSize,
+    documentSettings.orientation,
+  );
+  const screenLoad = PLATES.filter((plate) => settings.visible[plate]).reduce<{
+    marks: number;
+    plate: (typeof PLATES)[number] | null;
+  }>(
+    (worst, plate) => {
+      const marks = estimateGridPoints(
+        outputDimensions.width,
+        outputDimensions.height,
+        settings.cellSize,
+        settings.angles[plate],
+      );
+      return marks > worst.marks ? { marks, plate } : worst;
+    },
+    { marks: 0, plate: null },
+  );
+  const screenLoadIsDense = screenLoad.marks > MAX_EXPORT_GRID_POINTS;
   const preflightReviewCount =
     (hiddenPlates.length > 0 ? 1 : 0) +
     (sharedAngleGroups.length > 0 ? 1 : 0) +
     (!registration ? 1 : 0) +
-    (settings.invert ? 1 : 0);
+    (settings.invert ? 1 : 0) +
+    (screenLoadIsDense ? 1 : 0);
 
   function resetScreen() {
     setSettings((current) => ({
@@ -267,6 +316,11 @@ export default function HalftoneStudio() {
       dotShape: DEFAULT_SETTINGS.dotShape,
     }));
     setNotice("Screen controls reset");
+  }
+
+  function resetArtwork() {
+    setDocumentSettings({ ...DEFAULT_DOCUMENT_SETTINGS });
+    setNotice("Artwork controls reset");
   }
 
   function resetSeparation() {
@@ -293,10 +347,24 @@ export default function HalftoneStudio() {
     const visible = PLATES.filter((plate) => settings.visible[plate])
       .map((plate) => PLATE_META[plate].short)
       .join(", ");
+    const sheet = SHEET_SIZES.find(
+      ({ id }) => id === documentSettings.sheetSize,
+    );
     return [
       `${PRODUCT_NAME} JOB TICKET`,
       `Artwork: ${sourceName}`,
       `Source: ${sourceMeta}`,
+      `Sheet: ${sheet?.label ?? documentSettings.sheetSize}`,
+      `Orientation: ${titleCase(documentSettings.orientation)}`,
+      `Output dimensions: ${outputDimensions.width} × ${outputDimensions.height}px`,
+      `Resolution: ${DOCUMENT_DPI} DPI`,
+      `Scale: ${documentSettings.scalePercent}%`,
+      `Offset: X ${documentSettings.offsetX}px · Y ${documentSettings.offsetY}px`,
+      `Mirror: ${
+        documentSettings.mirrorImage
+          ? titleCase(documentSettings.mirrorDirection)
+          : "Off"
+      }`,
       `Dot: ${settings.dotShape}`,
       `Cell size: ${settings.cellSize}px`,
       `Contrast: ${settings.contrast}×`,
@@ -308,6 +376,15 @@ export default function HalftoneStudio() {
       `Registration marks: ${registration ? "Included" : "Off"}`,
       `Invert dots: ${settings.invert ? "On" : "Off"}`,
       `Ink density: ${Math.round(settings.opacity * 100)}%`,
+      `Estimated screen load: ${screenLoad.marks.toLocaleString(
+        "en-US",
+      )} marks/plate${
+        screenLoad.plate
+          ? ` (${PLATE_META[screenLoad.plate].short} at ${
+              settings.angles[screenLoad.plate]
+            }°)`
+          : ""
+      }`,
     ].join("\n");
   }
 
@@ -336,6 +413,16 @@ export default function HalftoneStudio() {
       setSource(image);
       setSourceName(file.name);
       setActivePlate("composite");
+      const ratio = image.naturalWidth / image.naturalHeight;
+      setDocumentSettings((current) => ({
+        ...current,
+        orientation:
+          ratio > 1.1
+            ? "landscape"
+            : ratio < 0.9
+              ? "portrait"
+              : current.orientation,
+      }));
       setNotice("Artwork loaded");
       URL.revokeObjectURL(url);
     };
@@ -361,18 +448,23 @@ export default function HalftoneStudio() {
 
   async function exportArtwork(kind: "composite" | "plates") {
     if (!source) return;
+    if (screenLoadIsDense) {
+      setExportOpen(false);
+      setNotice(
+        `Export blocked: estimated ${screenLoad.marks.toLocaleString(
+          "en-US",
+        )} marks per plate exceeds the ${MAX_EXPORT_GRID_POINTS.toLocaleString(
+          "en-US",
+        )} limit. Increase cell size to export.`,
+      );
+      return;
+    }
     setExportOpen(false);
     setExporting(true);
     await new Promise((resolve) => window.setTimeout(resolve, 30));
 
     try {
-      const sourceWidth =
-        source instanceof HTMLImageElement ? source.naturalWidth : source.width;
-      const sourceHeight =
-        source instanceof HTMLImageElement ? source.naturalHeight : source.height;
-      const exportScale = Math.min(1, 2800 / Math.max(sourceWidth, sourceHeight));
-      const width = Math.round(sourceWidth * exportScale);
-      const height = Math.round(sourceHeight * exportScale);
+      const { width, height } = outputDimensions;
 
       if (kind === "composite") {
         const canvas = document.createElement("canvas");
@@ -382,12 +474,14 @@ export default function HalftoneStudio() {
           height,
           registration,
           paper: "#ffffff",
+          document: documentSettings,
         });
         const blob = await new Promise<Blob | null>((resolve) =>
           canvas.toBlob(resolve, "image/png"),
         );
         if (!blob) throw new Error("Export failed");
-        downloadBlob(blob, `${cleanName(sourceName)}-halftone.png`);
+        const dpiBlob = await withPngDpi(blob, DOCUMENT_DPI);
+        downloadBlob(dpiBlob, `${cleanName(sourceName)}-halftone.png`);
         setNotice("Composite PNG exported");
       } else {
         const zip = new JSZip();
@@ -400,17 +494,41 @@ export default function HalftoneStudio() {
             registration,
             paper: "#ffffff",
             monochromePlate: true,
+            document: documentSettings,
           });
-          const data = canvas.toDataURL("image/png").split(",")[1];
+          const plateBlob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob(resolve, "image/png"),
+          );
+          if (!plateBlob) throw new Error("Plate export failed");
+          const dpiBlob = await withPngDpi(plateBlob, DOCUMENT_DPI);
           zip.file(
             `${cleanName(sourceName)}-${PLATE_META[plate].short}-plate.png`,
-            data,
-            { base64: true },
+            dpiBlob,
           );
         }
         zip.file(
           "job-settings.json",
-          JSON.stringify({ source: sourceName, settings, registration }, null, 2),
+          JSON.stringify(
+            {
+              source: sourceName,
+              document: documentSettings,
+              settings,
+              registration,
+              output: {
+                width,
+                height,
+                dpi: DOCUMENT_DPI,
+                estimatedMarksPerPlate: screenLoad.marks,
+                worstPlate: screenLoad.plate,
+                worstAngle:
+                  screenLoad.plate === null
+                    ? null
+                    : settings.angles[screenLoad.plate],
+              },
+            },
+            null,
+            2,
+          ),
         );
         const blob = await zip.generateAsync({ type: "blob" });
         downloadBlob(blob, `${cleanName(sourceName)}-CMYK-plates.zip`);
@@ -560,6 +678,7 @@ export default function HalftoneStudio() {
             description="Confirm the source file before building the screen."
             active={activeStage === "artwork"}
             onNext={() => adjacentStage(1)}
+            onReset={resetArtwork}
           >
             <button className="upload-card" onClick={() => fileRef.current?.click()}>
               <span className="upload-icon">
@@ -571,6 +690,194 @@ export default function HalftoneStudio() {
               </span>
               <span className="replace-label">Replace</span>
             </button>
+            <div className="artwork-layout-controls">
+              <label className="select-field">
+                <span>Sheet size</span>
+                <select
+                  data-testid="artwork-sheet-size"
+                  value={documentSettings.sheetSize}
+                  onChange={(event) =>
+                    setDocumentSettings((current) => ({
+                      ...current,
+                      sheetSize: event.target.value as SheetSizeId,
+                    }))
+                  }
+                >
+                  {SHEET_SIZES.map((sheet) => (
+                    <option key={sheet.id} value={sheet.id}>
+                      {sheet.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="artwork-control-group">
+                <span className="artwork-control-label">Orientation</span>
+                <div className="segmented-control" role="group" aria-label="Orientation">
+                  {(["portrait", "landscape"] as const).map((orientation) => (
+                    <button
+                      key={orientation}
+                      type="button"
+                      data-testid={`artwork-orientation-${orientation}`}
+                      aria-pressed={documentSettings.orientation === orientation}
+                      onClick={() =>
+                        setDocumentSettings((current) => ({
+                          ...current,
+                          orientation,
+                        }))
+                      }
+                    >
+                      {titleCase(orientation)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <NumericField
+                id="artworkScale"
+                label="Scale"
+                value={documentSettings.scalePercent}
+                min={10}
+                max={400}
+                step={1}
+                unit="%"
+                defaultValue={DEFAULT_DOCUMENT_SETTINGS.scalePercent}
+                onChange={(scalePercent) =>
+                  setDocumentSettings((current) => ({
+                    ...current,
+                    scalePercent,
+                  }))
+                }
+              />
+
+              <NumericField
+                id="artworkOffsetX"
+                label="X offset"
+                value={documentSettings.offsetX}
+                min={-6000}
+                max={6000}
+                step={1}
+                unit="px"
+                defaultValue={DEFAULT_DOCUMENT_SETTINGS.offsetX}
+                hint="Horizontal placement in 240-DPI document pixels."
+                onChange={(offsetX) =>
+                  setDocumentSettings((current) => ({
+                    ...current,
+                    offsetX,
+                  }))
+                }
+              />
+
+              <NumericField
+                id="artworkOffsetY"
+                label="Y offset"
+                value={documentSettings.offsetY}
+                min={-6000}
+                max={6000}
+                step={1}
+                unit="px"
+                defaultValue={DEFAULT_DOCUMENT_SETTINGS.offsetY}
+                hint="Vertical placement in 240-DPI document pixels."
+                onChange={(offsetY) =>
+                  setDocumentSettings((current) => ({
+                    ...current,
+                    offsetY,
+                  }))
+                }
+              />
+
+              <div className="artwork-action-row">
+                <button
+                  type="button"
+                  data-testid="artwork-center"
+                  onClick={() =>
+                    setDocumentSettings((current) => ({
+                      ...current,
+                      offsetX: 0,
+                      offsetY: 0,
+                    }))
+                  }
+                >
+                  Center
+                </button>
+                <button
+                  type="button"
+                  data-testid="artwork-fit"
+                  onClick={() => {
+                    if (!source) return;
+                    const sourceWidth =
+                      source instanceof HTMLImageElement
+                        ? source.naturalWidth
+                        : source.width;
+                    const sourceHeight =
+                      source instanceof HTMLImageElement
+                        ? source.naturalHeight
+                        : source.height;
+                    const sheet = getSheetPixelDimensions(
+                      documentSettings.sheetSize,
+                      documentSettings.orientation,
+                    );
+                    setDocumentSettings((current) => ({
+                      ...current,
+                      scalePercent: getFitScalePercent(
+                        sourceWidth,
+                        sourceHeight,
+                        sheet.width,
+                        sheet.height,
+                      ),
+                      offsetX: 0,
+                      offsetY: 0,
+                    }));
+                  }}
+                >
+                  Fit
+                </button>
+              </div>
+
+              <label className="artwork-mirror-toggle">
+                <span>Mirror artwork</span>
+                <input
+                  type="checkbox"
+                  data-testid="artwork-mirror"
+                  checked={documentSettings.mirrorImage}
+                  onChange={(event) =>
+                    setDocumentSettings((current) => ({
+                      ...current,
+                      mirrorImage: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+
+              <div className="artwork-control-group">
+                <span className="artwork-control-label">Mirror direction</span>
+                <div
+                  className="segmented-control"
+                  role="group"
+                  aria-label="Mirror direction"
+                >
+                  {(["horizontal", "vertical"] as const).map((mirrorDirection) => (
+                    <button
+                      key={mirrorDirection}
+                      type="button"
+                      data-testid={`artwork-mirror-direction-${mirrorDirection}`}
+                      aria-pressed={
+                        documentSettings.mirrorDirection === mirrorDirection
+                      }
+                      disabled={!documentSettings.mirrorImage}
+                      onClick={() =>
+                        setDocumentSettings((current) => ({
+                          ...current,
+                          mirrorDirection,
+                        }))
+                      }
+                    >
+                      {titleCase(mirrorDirection)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </StagePanel>
 
           <StagePanel
@@ -762,6 +1069,19 @@ export default function HalftoneStudio() {
                   label="Dot polarity"
                   value={settings.invert ? "Inverted — confirm" : "Standard positive"}
                 />
+                <PreflightItem
+                  review={screenLoadIsDense}
+                  label="Screen load"
+                  value={
+                    screenLoad.plate
+                      ? `${screenLoad.marks.toLocaleString(
+                          "en-US",
+                        )} estimated marks/plate (${
+                          PLATE_META[screenLoad.plate].short
+                        } at ${settings.angles[screenLoad.plate]}°)`
+                      : "No enabled plates"
+                  }
+                />
               </ul>
               <button
                 type="button"
@@ -781,11 +1101,17 @@ export default function HalftoneStudio() {
             dragging ? "dragging" : "",
             spaceHeld ? "pan-armed" : "",
             panning ? "panning" : "",
+            activeStage === "artwork" && !spaceHeld ? "artwork-placeable" : "",
+            placingArtwork ? "artwork-placing" : "",
           ]
             .filter(Boolean)
             .join(" ")}
           data-testid="stage-surface"
           data-pan-armed={spaceHeld ? "true" : "false"}
+          data-artwork-placeable={
+            activeStage === "artwork" && !spaceHeld ? "true" : "false"
+          }
+          data-artwork-dragging={placingArtwork ? "true" : "false"}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragging(true);
@@ -831,7 +1157,13 @@ export default function HalftoneStudio() {
           <div className="stage-toolbar">
             <div className="view-status">
               <Sparkles size={14} />
-              <span>Live browser preview</span>
+              <span>
+                {activeStage === "artwork"
+                  ? placingArtwork
+                    ? "Placing artwork in document pixels"
+                    : "Drag artwork to place · Space-drag pans proof"
+                  : "Live browser preview"}
+              </span>
             </div>
           </div>
 
@@ -845,7 +1177,94 @@ export default function HalftoneStudio() {
                 }}
                 onDoubleClick={() => setZoom(76)}
               >
-                <canvas ref={canvasRef} aria-label="Live CMYK halftone preview" />
+                <canvas
+                  ref={canvasRef}
+                  data-testid="artwork-canvas"
+                  aria-label="Live CMYK halftone preview"
+                  onPointerDown={(event) => {
+                    if (
+                      activeStage !== "artwork" ||
+                      spaceHeld ||
+                      event.button !== 0
+                    ) {
+                      return;
+                    }
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    if (
+                      event.clientX < bounds.left ||
+                      event.clientX > bounds.right ||
+                      event.clientY < bounds.top ||
+                      event.clientY > bounds.bottom ||
+                      bounds.width <= 0 ||
+                      bounds.height <= 0
+                    ) {
+                      return;
+                    }
+                    const sheet = getSheetPixelDimensions(
+                      documentSettings.sheetSize,
+                      documentSettings.orientation,
+                    );
+                    event.preventDefault();
+                    event.stopPropagation();
+                    artworkPlacementStart.current = {
+                      x: event.clientX,
+                      y: event.clientY,
+                      offsetX: documentSettings.offsetX,
+                      offsetY: documentSettings.offsetY,
+                      pixelsPerScreenX: sheet.width / bounds.width,
+                      pixelsPerScreenY: sheet.height / bounds.height,
+                    };
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    setPlacingArtwork(true);
+                  }}
+                  onPointerMove={(event) => {
+                    const start = artworkPlacementStart.current;
+                    if (!start || spaceHeld) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const offsetX = Math.min(
+                      6000,
+                      Math.max(
+                        -6000,
+                        start.offsetX +
+                          Math.round(
+                            (event.clientX - start.x) * start.pixelsPerScreenX,
+                          ),
+                      ),
+                    );
+                    const offsetY = Math.min(
+                      6000,
+                      Math.max(
+                        -6000,
+                        start.offsetY +
+                          Math.round(
+                            (event.clientY - start.y) * start.pixelsPerScreenY,
+                          ),
+                      ),
+                    );
+                    setDocumentSettings((current) => ({
+                      ...current,
+                      offsetX,
+                      offsetY,
+                    }));
+                  }}
+                  onPointerUp={(event) => {
+                    if (!artworkPlacementStart.current) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    artworkPlacementStart.current = null;
+                    setPlacingArtwork(false);
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                    }
+                  }}
+                  onPointerCancel={(event) => {
+                    if (!artworkPlacementStart.current) return;
+                    event.stopPropagation();
+                    artworkPlacementStart.current = null;
+                    setPlacingArtwork(false);
+                  }}
+                />
                 <span className="artboard-label" data-testid="artboard-label">
                   {activePlate === "composite"
                     ? hiddenPlates.length === 0
@@ -1053,6 +1472,10 @@ function PreflightItem({
 
 function cleanName(name: string) {
   return name.replace(/\.[^.]+$/, "").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
+}
+
+function titleCase(value: string) {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function downloadBlob(blob: Blob, filename: string) {

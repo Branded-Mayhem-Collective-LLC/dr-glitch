@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 async function openSeparation(page: Page) {
@@ -23,6 +24,31 @@ function contrastRatio(foreground: string, background: string) {
   const light = Math.max(luminance(foreground), luminance(background));
   const dark = Math.min(luminance(foreground), luminance(background));
   return (light + 0.05) / (dark + 0.05);
+}
+
+function pngChunks(bytes: Uint8Array) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const chunks: Array<{
+    type: string;
+    length: number;
+    dataOffset: number;
+  }> = [];
+  let offset = 8;
+
+  while (offset + 12 <= bytes.byteLength) {
+    const length = view.getUint32(offset);
+    const type = String.fromCharCode(
+      bytes[offset + 4],
+      bytes[offset + 5],
+      bytes[offset + 6],
+      bytes[offset + 7],
+    );
+    chunks.push({ type, length, dataOffset: offset + 8 });
+    offset += length + 12;
+    if (type === "IEND") break;
+  }
+
+  return { chunks, view };
 }
 
 test.describe("ink rail", () => {
@@ -465,6 +491,197 @@ test.describe("typed numerics", () => {
   });
 });
 
+test.describe("Artwork stage — restored layout controls", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("canvas");
+    await page.getByTestId("stage-artwork").click();
+  });
+
+  test("keeps the complete layout toolset inside the left inspector with restored defaults", async ({
+    page,
+  }) => {
+    const inspector = page.getByTestId("inspector");
+    const artwork = inspector.getByTestId("stage-panel-artwork");
+
+    const sheetSize = artwork.getByTestId("artwork-sheet-size");
+    await expect(sheetSize).toBeVisible();
+    expect(await sheetSize.evaluate((element) => element.tagName)).toBe("SELECT");
+    await expect(sheetSize).toHaveValue("11x15");
+
+    const portrait = artwork.getByTestId("artwork-orientation-portrait");
+    const landscape = artwork.getByTestId("artwork-orientation-landscape");
+    await expect(portrait).toHaveAttribute("aria-pressed", "true");
+    await expect(landscape).toHaveAttribute("aria-pressed", "false");
+
+    await expect(artwork.getByTestId("numeric-artworkScale")).toHaveValue("100");
+    await expect(
+      artwork.getByTestId("numeric-artworkScale-unit"),
+    ).toContainText("%");
+    await expect(
+      artwork.getByTestId("numeric-artworkScale-scrub"),
+    ).toBeVisible();
+    for (const axis of ["X", "Y"]) {
+      const offset = artwork.getByTestId(`numeric-artworkOffset${axis}`);
+      await expect(offset).toHaveValue("0");
+      await expect(offset).toHaveAttribute("inputmode", "decimal");
+      await expect(
+        artwork.getByTestId(`numeric-artworkOffset${axis}-slider`),
+      ).toBeVisible();
+    }
+
+    await expect(artwork.getByTestId("artwork-center")).toBeVisible();
+    await expect(artwork.getByTestId("artwork-fit")).toBeVisible();
+
+    const mirror = artwork.getByTestId("artwork-mirror");
+    await expect(mirror).toHaveAttribute("type", "checkbox");
+    await expect(mirror).not.toBeChecked();
+    await expect(
+      artwork.getByTestId("artwork-mirror-direction-horizontal"),
+    ).toBeVisible();
+    await expect(
+      artwork.getByTestId("artwork-mirror-direction-vertical"),
+    ).toBeVisible();
+
+    const stage = page.getByTestId("stage-surface");
+    await expect(stage).toHaveAttribute("data-artwork-placeable", "true");
+    await expect(stage.locator(".view-status")).toContainText(
+      "Drag artwork to place",
+    );
+    await expect(page.getByTestId("artwork-canvas")).toHaveCSS("cursor", "move");
+  });
+
+  test("typed offsets update and Center returns both axes to zero", async ({
+    page,
+  }) => {
+    const artwork = page
+      .getByTestId("inspector")
+      .getByTestId("stage-panel-artwork");
+    const offsetX = artwork.getByTestId("numeric-artworkOffsetX");
+    const offsetY = artwork.getByTestId("numeric-artworkOffsetY");
+
+    await offsetX.fill("425");
+    await offsetX.press("Enter");
+    await offsetY.fill("-275");
+    await offsetY.press("Enter");
+
+    await expect(offsetX).toHaveValue("425");
+    await expect(offsetY).toHaveValue("-275");
+
+    await artwork.getByTestId("artwork-center").click();
+    await expect(offsetX).toHaveValue("0");
+    await expect(offsetY).toHaveValue("0");
+  });
+
+  test("canvas drag places artwork and updates the job ticket without moving proof pan", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as typeof window & { __copiedTicket?: string }).__copiedTicket =
+              text;
+          },
+        },
+      });
+    });
+
+    const stage = page.getByTestId("stage-surface");
+    const canvas = page.getByTestId("artwork-canvas");
+    const artboard = page.locator(".artboard-wrap");
+    const beforePan = await artboard.evaluate(
+      (element) => element.style.transform,
+    );
+    const bounds = await canvas.boundingBox();
+    expect(bounds).not.toBeNull();
+
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height / 2,
+    );
+    await page.mouse.down();
+    await expect(stage).toHaveAttribute("data-artwork-dragging", "true");
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2 + 30,
+      bounds!.y + bounds!.height / 2 + 18,
+    );
+    await page.mouse.up();
+
+    const offsetX = page.getByTestId("numeric-artworkOffsetX");
+    const offsetY = page.getByTestId("numeric-artworkOffsetY");
+    await expect(offsetX).not.toHaveValue("0");
+    await expect(offsetY).not.toHaveValue("0");
+    await expect(stage).toHaveAttribute("data-artwork-dragging", "false");
+    expect(await artboard.evaluate((element) => element.style.transform)).toBe(
+      beforePan,
+    );
+
+    const placedX = await offsetX.inputValue();
+    const placedY = await offsetY.inputValue();
+    await page.getByTestId("stage-output").click();
+    await page.getByRole("button", { name: "Copy job ticket" }).click();
+    const ticket = await page.evaluate(
+      () => (window as typeof window & { __copiedTicket?: string }).__copiedTicket,
+    );
+    expect(ticket).toContain(`Offset: X ${placedX}px · Y ${placedY}px`);
+  });
+
+  test("Scale supports direct typing and value scrubbing", async ({ page }) => {
+    const artwork = page
+      .getByTestId("inspector")
+      .getByTestId("stage-panel-artwork");
+    const scale = artwork.getByTestId("numeric-artworkScale");
+
+    await expect(scale).toBeVisible();
+    await scale.fill("125");
+    await scale.press("Enter");
+    await expect(scale).toHaveValue("125");
+
+    const scrub = artwork.getByTestId("numeric-artworkScale-scrub");
+    const box = await scrub.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      box!.x + box!.width / 2 + 5,
+      box!.y + box!.height / 2,
+    );
+    await page.mouse.up();
+    await expect(scale).not.toHaveValue("125");
+  });
+
+  test("selecting landscape changes the rendered canvas aspect", async ({
+    page,
+  }) => {
+    const artwork = page
+      .getByTestId("inspector")
+      .getByTestId("stage-panel-artwork");
+    const portrait = artwork.getByTestId("artwork-orientation-portrait");
+    const landscape = artwork.getByTestId("artwork-orientation-landscape");
+    const canvas = page.getByTestId("artwork-canvas");
+
+    await expect(canvas).toBeVisible();
+    const portraitSize = await canvas.evaluate((element: HTMLCanvasElement) => ({
+      width: element.width,
+      height: element.height,
+    }));
+    expect(portraitSize.height).toBeGreaterThan(portraitSize.width);
+
+    await landscape.click();
+    await expect(landscape).toHaveAttribute("aria-pressed", "true");
+    await expect(portrait).toHaveAttribute("aria-pressed", "false");
+    await expect
+      .poll(async () =>
+        canvas.evaluate(
+          (element: HTMLCanvasElement) => element.width / element.height,
+        ),
+      )
+      .toBeGreaterThan(1);
+  });
+});
+
 test.describe("stage spine and keyboard", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
@@ -690,13 +907,14 @@ test.describe("press workflow preflight", () => {
     page,
   }) => {
     await page.getByTestId("stage-screen").click();
+    const screen = page.getByTestId("stage-panel-screen");
     await page.getByTestId("numeric-cellSize-slider").fill("24");
-    await page.locator(".select-field select").selectOption("square");
+    await screen.locator(".select-field select").selectOption("square");
 
     await page.getByRole("button", { name: "Reset Screen controls" }).click();
 
     await expect(page.getByTestId("numeric-cellSize")).toHaveValue("12");
-    await expect(page.locator(".select-field select")).toHaveValue("round");
+    await expect(screen.locator(".select-field select")).toHaveValue("round");
     await expect(page.getByRole("status")).toContainText("Screen controls reset");
   });
 
@@ -739,6 +957,86 @@ test.describe("press workflow preflight", () => {
     );
   });
 
+  test("dense screen load is reviewed and blocks export without changing cell size", async ({
+    page,
+  }) => {
+    const artwork = page
+      .getByTestId("inspector")
+      .getByTestId("stage-panel-artwork");
+    await artwork.getByTestId("artwork-sheet-size").selectOption("15x22");
+
+    await page.getByTestId("stage-screen").click();
+    const screen = page.getByTestId("stage-panel-screen");
+    const cellSize = screen.getByTestId("numeric-cellSize");
+    await cellSize.fill("4");
+    await cellSize.press("Enter");
+
+    await page.getByTestId("stage-output").click();
+    const output = page.getByTestId("stage-panel-output");
+    const preflight = output.locator(".preflight-card");
+    const screenLoad = preflight
+      .getByRole("listitem")
+      .filter({ hasText: "Screen load" });
+    await expect(screenLoad).toHaveAttribute("data-status", "review");
+    await expect(screenLoad).toContainText("2,464,900 estimated marks/plate");
+    await expect(preflight.getByTestId("preflight-count")).toHaveText(
+      "1 to review",
+    );
+
+    const topActions = page.locator(".top-actions");
+    await topActions.getByRole("button", { name: /^Export/ }).click();
+    await topActions
+      .locator(".export-menu")
+      .getByRole("button", { name: /Composite PNG/ })
+      .click();
+
+    await expect(page.getByRole("status")).toHaveText(
+      "Export blocked: estimated 2,464,900 marks per plate exceeds the 2,000,000 limit. Increase cell size to export.",
+    );
+    await expect(cellSize).toHaveValue("4");
+    await expect(
+      topActions.getByRole("button", { name: /^Export/ }),
+    ).toBeEnabled();
+  });
+
+  test("lightweight composite PNG contains one 240-DPI pHYs chunk", async ({
+    page,
+  }) => {
+    const artwork = page
+      .getByTestId("inspector")
+      .getByTestId("stage-panel-artwork");
+    await artwork.getByTestId("artwork-sheet-size").selectOption("8x10");
+
+    await page.getByTestId("stage-screen").click();
+    const screen = page.getByTestId("stage-panel-screen");
+    const cellSize = screen.getByTestId("numeric-cellSize");
+    await cellSize.fill("64");
+    await cellSize.press("Enter");
+
+    const topActions = page.locator(".top-actions");
+    await topActions.getByRole("button", { name: /^Export/ }).click();
+    const downloadPromise = page.waitForEvent("download");
+    await topActions
+      .locator(".export-menu")
+      .getByRole("button", { name: /Composite PNG/ })
+      .click();
+    const download = await downloadPromise;
+    const downloadPath = await download.path();
+    expect(downloadPath).not.toBeNull();
+
+    const bytes = await readFile(downloadPath!);
+    expect([...bytes.subarray(0, 8)]).toEqual([
+      137, 80, 78, 71, 13, 10, 26, 10,
+    ]);
+    const { chunks, view } = pngChunks(bytes);
+    const physChunks = chunks.filter(({ type }) => type === "pHYs");
+    expect(physChunks).toHaveLength(1);
+    expect(physChunks[0].length).toBe(9);
+    expect(view.getUint32(physChunks[0].dataOffset)).toBe(9449);
+    expect(view.getUint32(physChunks[0].dataOffset + 4)).toBe(9449);
+    expect(bytes[physChunks[0].dataOffset + 8]).toBe(1);
+  });
+
   test("job ticket copies the visible recipe for press handoff", async ({
     page,
   }) => {
@@ -760,6 +1058,11 @@ test.describe("press workflow preflight", () => {
       () => (window as typeof window & { __copiedTicket?: string }).__copiedTicket,
     );
     expect(ticket).toContain("DR.GLITCH JOB TICKET");
+    expect(ticket).toContain("Output dimensions: 2640 × 3600px");
+    expect(ticket).toContain("Resolution: 240 DPI");
+    expect(ticket).toContain(
+      "Estimated screen load: 135,424 marks/plate (K at 45°)",
+    );
     expect(ticket).toContain("Angles: C 15° · M 75° · Y 0° · K 45°");
     expect(ticket).toContain("Registration marks: Included");
     await expect(page.getByRole("status")).toContainText("Job ticket copied");
