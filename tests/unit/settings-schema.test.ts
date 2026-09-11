@@ -3,6 +3,8 @@ import { parseSettings } from "../../src/studio/settings-schema";
 
 const valid = {
   cellSize: 12,
+  frayedXEdge: 0,
+  frayedYEdge: 0,
   contrast: 1,
   exposure: 0,
   opacity: 0.84,

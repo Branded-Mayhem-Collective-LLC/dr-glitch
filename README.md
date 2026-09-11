@@ -116,20 +116,43 @@ Saved cloud projects and cross-device project persistence are **not implemented 
 
 ## Local development
 
+The editable desktop source is in `desktop/halftone_glitch_2.py`. See
+[desktop parity notes](docs/desktop-parity.md) for implemented features and
+remaining differences. The source copy does not automatically sync with
+`C:\HalftoneGlitch\halftone_glitch_2.py`.
+
+The Screen stage now includes Triangle, Cross, Circle outline, outline stroke
+(0.25–10 document pixels), and Grayscale (K). Grayscale uses the K angle and
+exports one K plate plus settings. CMY controls become available again when
+returning to CMYK. Reset Screen restores CMYK, Round, and a 1 px outline.
+
 Requirements: Node.js `>=22.13.0`.
 
 ```bash
-npm install
-npm run dev
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
 Useful checks:
 
 ```bash
 npm test
+npx playwright install chromium
 npm run test:e2e
+npm run lint
 npm run build
 ```
+
+Open `http://127.0.0.1:5173` in a desktop browser. Use the sample immediately
+or upload a PNG/JPEG/WebP; no account is required. Open **Screen** for the new
+controls, **Separation** for the K angle, and **Export** for PNG/plate ZIPs.
+
+In VS Code, choose **Terminal → Run Task → DR.GLITCH: Start local studio**.
+Keep that terminal running while testing. Stop it with Ctrl+C or Terminate
+Task, then run the same task to restart. **DR.GLITCH: All checks** runs unit
+tests, browser tests, lint, and build. Install Chromium once using the command
+above. If port 5173 is already occupied, use the running studio or stop its
+existing development task before starting another.
 
 The hosted authentication paths require the D1 and Better Auth bindings declared in `wrangler.toml`. The separation studio itself remains usable as a guest without those hosted bindings.
 

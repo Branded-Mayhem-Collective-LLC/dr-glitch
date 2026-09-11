@@ -27,6 +27,9 @@ import SessionBadge from "../auth/SessionBadge";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
 import ProcessLoader from "../components/ProcessLoader";
 import InkRail from "./InkRail";
+import CustomShapeDialog from "./CustomShapeDialog";
+import { importCustomShape, prepareCustomShape } from "./custom-shape";
+import type { CustomShapeAsset } from "./custom-shape-data";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
 import NumericField from "./NumericField";
 import StageSpine, { type Stage } from "./StageSpine";
@@ -38,8 +41,10 @@ import {
   HalftoneSettings,
   PLATE_META,
   PLATES,
+  processPlates,
   Plate,
   renderHalftone,
+  renderPlateSvg,
 } from "./halftone";
 import {
   DEFAULT_DOCUMENT_SETTINGS,
@@ -65,38 +70,84 @@ import {
 
 const DEFAULT_SETTINGS: HalftoneSettings = {
   cellSize: 12,
-  contrast: 1,
-  exposure: 0,
-  opacity: 0.84,
+  frayedXEdge: 0,
+  frayedYEdge: 0,
+  opacity: 1,
   dotShape: "round",
   invert: false,
+  grayscale: false,
+  strokeWidth: 1,
   angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 },
   visible: { cyan: true, magenta: true, yellow: true, black: true },
+  diffusionEnabled: false,
+  diffusionAlgorithm: "floyd-steinberg",
+  diffusionModulation: "none",
+  diffusionModStrength: 0.5,
+  diffusionIntensity: 0.5,
+  diffusionLevels: 8,
+  diffusionSharpenStrength: 0,
+  diffusionSharpenRadius: 1,
+  diffusionDenoise: 0,
+  brokenKernel: 0,
+  directionalBias: 0,
+  directionalBiasAngle: 0,
+  errorOverflow: 0,
+  diffusionReset: 0,
+  crossChannelBleed: 0,
+  sliceShift: 0,
+  sliceSize: 20,
+  verticalSliceShift: 0,
+  verticalSliceSize: 20,
+  gridWarp: 0,
+  warpScale: 100,
+  smearDrag: 0,
+  smearLength: 24,
+  smearVertical: false,
+  macroblockCorrupt: 0,
+  macroblockDropout: 0.25,
+  blockShift: 0,
+  blockShiftSize: 16,
+  channelDesync: 0,
+  bitmapSort: 0,
+  bitmapSortVertical: false,
 };
+
+const CMYK_PRESETS = [
+  { id: "preset-1", label: "Preset 1 · C15 M75 Y0 K45", angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 } },
+  { id: "preset-2", label: "Preset 2 · C105 M75 Y90 K15", angles: { cyan: 105, magenta: 75, yellow: 90, black: 15 } },
+  { id: "preset-3", label: "Preset 3 · C15 M45 Y0 K75", angles: { cyan: 15, magenta: 45, yellow: 0, black: 75 } },
+  { id: "preset-4", label: "Preset 4 · C165 M45 Y90 K105", angles: { cyan: 165, magenta: 45, yellow: 90, black: 105 } },
+] as const;
 
 const STAGE_DEFINITIONS = [
   {
     id: "artwork",
     number: "01",
-    label: "Artwork",
+    label: "Artboard",
     description: "Confirm the source file before building the screen.",
   },
   {
-    id: "screen",
+    id: "halftone-cmyk",
     number: "02",
-    label: "Screen",
-    description: "Set the dot geometry and tonal response.",
+    label: "Halftone / CMYK",
+    description: "Build the dot pattern, screen angles, and plate mix.",
   },
   {
-    id: "separation",
+    id: "diffusion",
     number: "03",
-    label: "Separation",
-    description: "Check each process plate and its screen angle.",
+    label: "Diffusion",
+    description: "Shape ink distribution with diffusion and glitch controls.",
+  },
+  {
+    id: "glitch",
+    number: "04",
+    label: "Glitch",
+    description: "Slice, warp, smear, corrupt, and sort the source field.",
   },
   {
     id: "output",
-    number: "04",
-    label: "Output",
+    number: "05",
+    label: "Output / Registration",
     description: "Finish the plate package and press handoff.",
   },
 ] as const;
@@ -112,35 +163,36 @@ export default function HalftoneStudio() {
   const [documentSettings, setDocumentSettings] = useState<DocumentSettings>(
     () => ({ ...DEFAULT_DOCUMENT_SETTINGS }),
   );
-  const [activePlate, setActivePlate] = useState<Plate>("composite");
+  const [selectedPlate, setActivePlate] = useState<Plate>("composite");
+  const activePlate = settings.grayscale && selectedPlate !== "composite" ? "black" : selectedPlate;
+  const applicablePlates = useMemo(() => processPlates(settings), [settings]);
   const [zoom, setZoom] = useState(76);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
-  const [placingArtwork, setPlacingArtwork] = useState(false);
   const [activeStage, setActiveStage] = useState<StudioStageId>("artwork");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [registration, setRegistration] = useState(true);
+  const [registrationSize, setRegistrationSize] = useState(120);
+  const [registrationOffset, setRegistrationOffset] = useState(120);
+  const [registrationWeight, setRegistrationWeight] = useState(2);
+  const [registrationShape, setRegistrationShape] = useState<CustomShapeAsset>();
+  const [registrationMode, setRegistrationMode] = useState<"corners" | "centered">("corners");
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [customShapeOpen, setCustomShapeOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const patternPreviewRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const registrationFileRef = useRef<HTMLInputElement>(null);
   const renderFrame = useRef<number | null>(null);
   const panStart = useRef<{
     x: number;
     y: number;
     panX: number;
     panY: number;
-  } | null>(null);
-  const artworkPlacementStart = useRef<{
-    x: number;
-    y: number;
-    offsetX: number;
-    offsetY: number;
-    pixelsPerScreenX: number;
-    pixelsPerScreenY: number;
   } | null>(null);
 
   useEffect(() => {
@@ -160,21 +212,36 @@ export default function HalftoneStudio() {
       plate: activePlate,
       width: sheet.width * scale,
       height: sheet.height * scale,
-      paper: "#F4F1E9",
+      paper: documentSettings.background === "black" ? "#111214" : "#F4F1E9",
       registration,
+      registrationSize,
+      registrationOffset,
+      registrationWeight,
+      registrationShape,
+      registrationMode,
       monochromePlate: true,
       document: documentSettings,
       preview: true,
     });
-  }, [activePlate, documentSettings, registration, settings, source]);
+  }, [activePlate, documentSettings, registration, registrationMode, registrationOffset, registrationShape, registrationSize, registrationWeight, settings, source]);
 
   useEffect(() => {
+    let cancelled = false;
     if (renderFrame.current) cancelAnimationFrame(renderFrame.current);
-    renderFrame.current = requestAnimationFrame(render);
+    renderFrame.current = requestAnimationFrame(async () => {
+      try {
+        if (settings.dotShape === "custom" && settings.customShape) await prepareCustomShape(settings.customShape);
+        if (registrationShape) await prepareCustomShape(registrationShape);
+        if (!cancelled) render();
+      } catch (error) {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : "The custom SVG could not be rendered.");
+      }
+    });
     return () => {
+      cancelled = true;
       if (renderFrame.current) cancelAnimationFrame(renderFrame.current);
     };
-  }, [render]);
+  }, [registrationShape, render, settings.dotShape, settings.customShape]);
 
   useEffect(() => {
     if (!notice) return;
@@ -197,8 +264,9 @@ export default function HalftoneStudio() {
   ) => setSettings((current) => ({ ...current, [key]: value }));
 
   const handleSolo = useCallback((plate: Plate) => {
+    if (settings.grayscale && plate !== "black" && plate !== "composite") return;
     setActivePlate(plate);
-  }, []);
+  }, [settings.grayscale]);
 
   const handleCellSizeDelta = useCallback((delta: number) => {
     setSettings((current) => ({
@@ -228,9 +296,7 @@ export default function HalftoneStudio() {
     function reset() {
       setSpaceHeld(false);
       setPanning(false);
-      setPlacingArtwork(false);
       panStart.current = null;
-      artworkPlacementStart.current = null;
     }
 
     window.addEventListener("keydown", down);
@@ -263,28 +329,88 @@ export default function HalftoneStudio() {
     [],
   );
 
+  useEffect(() => {
+    const canvas = patternPreviewRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const size = 80;
+    const scale = window.devicePixelRatio || 1;
+    const frayedXEdge = Number(settings.frayedXEdge ?? 0);
+    const frayedYEdge = Number(settings.frayedYEdge ?? 0);
+    canvas.width = size * scale;
+    canvas.height = size * scale;
+    context.setTransform(scale, 0, 0, scale, 0, 0);
+    context.fillStyle = "#f4f1e9";
+    context.fillRect(0, 0, size, size);
+    const colors = ["#00a9c8", "#e53578", "#f0d422", "#202226"] as const;
+    const plates = ["cyan", "magenta", "yellow", "black"] as const;
+    for (let plateIndex = 0; plateIndex < plates.length; plateIndex += 1) {
+      const plate = plates[plateIndex];
+      if (activePlate !== "composite" && plate !== activePlate) continue;
+      if (!settings.visible[plate] || (settings.grayscale && plate !== "black")) continue;
+      const angle = (settings.angles[plate] * Math.PI) / 180;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      context.fillStyle = colors[plateIndex];
+      context.globalAlpha = settings.grayscale ? 0.82 : 0.48;
+      const cell = Math.max(5, Math.min(14, settings.cellSize * 0.72));
+      for (let u = -80; u <= 160; u += cell) {
+        for (let v = -80; v <= 160; v += cell) {
+          const x = 40 + u * cos - v * sin;
+          const y = 40 + u * sin + v * cos;
+          if (x < -4 || y < -4 || x > 84 || y > 84) continue;
+          const edgeX = Math.min(x, size - x);
+          const edgeY = Math.min(y, size - y);
+          const fray = Math.min(
+            1,
+            frayedXEdge === 0 ? 1 : edgeX / (frayedXEdge * 0.8),
+            frayedYEdge === 0 ? 1 : edgeY / (frayedYEdge * 0.8),
+          );
+          const radius = Math.max(1.5, cell * 0.32 * fray);
+          context.beginPath();
+          if (settings.dotShape === "square") context.rect(x - radius, y - radius, radius * 2, radius * 2);
+          else if (settings.dotShape === "triangle") {
+            context.moveTo(x, y - radius);
+            context.lineTo(x + radius, y + radius);
+            context.lineTo(x - radius, y + radius);
+            context.closePath();
+          } else context.arc(x, y, radius, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+    }
+    context.globalAlpha = 1;
+  }, [activePlate, settings.angles, settings.cellSize, settings.dotShape, settings.frayedXEdge, settings.frayedYEdge, settings.grayscale, settings.visible]);
+
+  function cyclePatternPlate() {
+    const sequence: Plate[] = ["composite", ...applicablePlates];
+    const next = sequence[(sequence.indexOf(activePlate) + 1) % sequence.length];
+    setActivePlate(next);
+  }
+
   // §1: "a print tool that misleads the eye about ink is broken." renderHalftone
   // blanks any plate (including every plate inside a composite render) whose
   // settings.visible flag is off, so the proof can go blank while its label
   // still claims to show something. hiddenPlates drives the same label logic
   // for both the single-plate case (already handled below) and composite.
   const hiddenPlates = useMemo(
-    () => PLATES.filter((plate) => !settings.visible[plate]),
-    [settings.visible],
+    () => applicablePlates.filter((plate) => !settings.visible[plate]),
+    [settings.visible, applicablePlates],
   );
   const sharedAngleGroups = useMemo(() => {
     const grouped = new Map<number, Array<(typeof PLATES)[number]>>();
-    for (const plate of PLATES) {
+    for (const plate of applicablePlates) {
       const angle = ((settings.angles[plate] % 360) + 360) % 360;
       grouped.set(angle, [...(grouped.get(angle) ?? []), plate]);
     }
     return [...grouped.entries()].filter(([, plates]) => plates.length > 1);
-  }, [settings.angles]);
+  }, [settings.angles, applicablePlates]);
   const outputDimensions = getSheetPixelDimensions(
     documentSettings.sheetSize,
     documentSettings.orientation,
   );
-  const screenLoad = PLATES.filter((plate) => settings.visible[plate]).reduce<{
+  const screenLoad = applicablePlates.filter((plate) => settings.visible[plate]).reduce<{
     marks: number;
     plate: (typeof PLATES)[number] | null;
   }>(
@@ -307,15 +433,20 @@ export default function HalftoneStudio() {
     (settings.invert ? 1 : 0) +
     (screenLoadIsDense ? 1 : 0);
 
-  function resetScreen() {
+  function resetHalftoneCmyk() {
     setSettings((current) => ({
       ...current,
       cellSize: DEFAULT_SETTINGS.cellSize,
-      contrast: DEFAULT_SETTINGS.contrast,
-      exposure: DEFAULT_SETTINGS.exposure,
+      frayedXEdge: DEFAULT_SETTINGS.frayedXEdge,
+      frayedYEdge: DEFAULT_SETTINGS.frayedYEdge,
       dotShape: DEFAULT_SETTINGS.dotShape,
+      strokeWidth: DEFAULT_SETTINGS.strokeWidth,
+      grayscale: DEFAULT_SETTINGS.grayscale,
+      angles: { ...DEFAULT_SETTINGS.angles },
+      visible: { ...DEFAULT_SETTINGS.visible },
     }));
-    setNotice("Screen controls reset");
+    setActivePlate("composite");
+    setNotice("Halftone / CMYK controls reset");
   }
 
   function resetArtwork() {
@@ -323,28 +454,74 @@ export default function HalftoneStudio() {
     setNotice("Artwork controls reset");
   }
 
-  function resetSeparation() {
-    setSettings((current) => ({
-      ...current,
-      angles: { ...DEFAULT_SETTINGS.angles },
-      visible: { ...DEFAULT_SETTINGS.visible },
-    }));
+  function applyCmykPreset(presetId: string) {
+    const preset = CMYK_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setSettings((current) => ({ ...current, angles: { ...preset.angles } }));
     setActivePlate("composite");
-    setNotice("Plate angles and visibility reset");
+    setNotice(`${preset.label} loaded`);
   }
 
   function resetOutput() {
     setSettings((current) => ({
       ...current,
-      opacity: DEFAULT_SETTINGS.opacity,
-      invert: DEFAULT_SETTINGS.invert,
+      opacity: 1,
+      invert: false,
     }));
     setRegistration(true);
+    setRegistrationSize(120);
+    setRegistrationOffset(120);
+    setRegistrationWeight(2);
+    setRegistrationShape(undefined);
+    setRegistrationMode("corners");
     setNotice("Output controls reset");
   }
 
+  function setRegistrationEnabled(enabled: boolean) {
+    setRegistration(enabled);
+    setRegistrationSize(120);
+    setRegistrationOffset(120);
+    setRegistrationWeight(2);
+    setRegistrationShape(undefined);
+    setRegistrationMode("corners");
+  }
+
+  function resetDiffusion() {
+    setSettings((current) => ({
+      ...current,
+      diffusionEnabled: DEFAULT_SETTINGS.diffusionEnabled,
+      diffusionAlgorithm: DEFAULT_SETTINGS.diffusionAlgorithm,
+      diffusionModulation: DEFAULT_SETTINGS.diffusionModulation,
+      diffusionModStrength: DEFAULT_SETTINGS.diffusionModStrength,
+      diffusionIntensity: DEFAULT_SETTINGS.diffusionIntensity,
+      diffusionLevels: DEFAULT_SETTINGS.diffusionLevels,
+      diffusionSharpenStrength: DEFAULT_SETTINGS.diffusionSharpenStrength,
+      diffusionSharpenRadius: DEFAULT_SETTINGS.diffusionSharpenRadius,
+      diffusionDenoise: DEFAULT_SETTINGS.diffusionDenoise,
+      brokenKernel: DEFAULT_SETTINGS.brokenKernel,
+      directionalBias: DEFAULT_SETTINGS.directionalBias,
+      directionalBiasAngle: DEFAULT_SETTINGS.directionalBiasAngle,
+      errorOverflow: DEFAULT_SETTINGS.errorOverflow,
+      diffusionReset: DEFAULT_SETTINGS.diffusionReset,
+      crossChannelBleed: DEFAULT_SETTINGS.crossChannelBleed,
+    }));
+    setNotice("Diffusion controls reset");
+  }
+
+  function resetGlitch() {
+    setSettings((current) => ({
+      ...current,
+      sliceShift: 0, sliceSize: 20,
+      verticalSliceShift: 0, verticalSliceSize: 20,
+      gridWarp: 0, warpScale: 100, smearDrag: 0, smearLength: 24, smearVertical: false,
+      macroblockCorrupt: 0, macroblockDropout: 0.25, blockShift: 0, blockShiftSize: 16,
+      channelDesync: 0, bitmapSort: 0, bitmapSortVertical: false,
+    }));
+    setNotice("Glitch controls reset");
+  }
+
   function jobTicketText() {
-    const visible = PLATES.filter((plate) => settings.visible[plate])
+    const visible = applicablePlates.filter((plate) => settings.visible[plate])
       .map((plate) => PLATE_META[plate].short)
       .join(", ");
     const sheet = SHEET_SIZES.find(
@@ -359,23 +536,26 @@ export default function HalftoneStudio() {
       `Output dimensions: ${outputDimensions.width} × ${outputDimensions.height}px`,
       `Resolution: ${DOCUMENT_DPI} DPI`,
       `Scale: ${documentSettings.scalePercent}%`,
-      `Offset: X ${documentSettings.offsetX}px · Y ${documentSettings.offsetY}px`,
       `Mirror: ${
         documentSettings.mirrorImage
           ? titleCase(documentSettings.mirrorDirection)
           : "Off"
       }`,
       `Dot: ${settings.dotShape}`,
+      ...(settings.dotShape === "custom" && settings.customShape ? [`Custom SVG: ${settings.customShape.filename} (stretched to square)`] : []),
+      `Color mode: ${settings.grayscale ? "Grayscale (K)" : "CMYK"}`,
+      `Outline stroke: ${settings.strokeWidth ?? 1}px`,
       `Cell size: ${settings.cellSize}px`,
-      `Contrast: ${settings.contrast}×`,
-      `Exposure: ${Math.round(settings.exposure * 100)}%`,
-      `Angles: ${PLATES.map(
+      `Angles: ${applicablePlates.map(
         (plate) => `${PLATE_META[plate].short} ${settings.angles[plate]}°`,
       ).join(" · ")}`,
       `Enabled plates: ${visible || "None"}`,
       `Registration marks: ${registration ? "Included" : "Off"}`,
-      `Invert dots: ${settings.invert ? "On" : "Off"}`,
-      `Ink density: ${Math.round(settings.opacity * 100)}%`,
+      `Registration size: ${registrationSize}px`,
+      `Registration offset: ${registrationOffset}px`,
+      `Registration weight: ${registrationWeight}px`,
+      `Registration mode: ${registrationMode === "centered" ? "Top/bottom centered" : "Four corners"}`,
+      ...(registrationShape ? [`Registration SVG: ${registrationShape.filename}`] : []),
       `Estimated screen load: ${screenLoad.marks.toLocaleString(
         "en-US",
       )} marks/plate${
@@ -439,6 +619,20 @@ export default function HalftoneStudio() {
     event.target.value = "";
   }
 
+  async function onRegistrationFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const shape = await importCustomShape(file);
+      setRegistrationShape(shape);
+      setRegistration(true);
+      setNotice(`Registration mark loaded: ${shape.filename}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "That registration SVG could not be imported.");
+    }
+  }
+
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
@@ -446,7 +640,7 @@ export default function HalftoneStudio() {
     if (file) loadFile(file);
   }
 
-  async function exportArtwork(kind: "composite" | "plates") {
+  async function exportArtwork(kind: "png" | "svg" | "jpg" | "tiff" | "plates") {
     if (!source) return;
     if (screenLoadIsDense) {
       setExportOpen(false);
@@ -465,36 +659,81 @@ export default function HalftoneStudio() {
 
     try {
       const { width, height } = outputDimensions;
+      if (settings.dotShape === "custom" && settings.customShape) await prepareCustomShape(settings.customShape);
 
-      if (kind === "composite") {
+      if (kind !== "plates") {
+        if (kind === "svg") {
+          const baseName = cleanName(sourceName);
+          const svgZip = new JSZip();
+          const folder = `${baseName}_SVG_Plates`;
+          for (const plate of applicablePlates) {
+            const svg = renderPlateSvg(source, settings, plate, {
+              width,
+              height,
+              document: documentSettings,
+            });
+            svgZip.file(`${folder}/${settings.grayscale ? "K" : PLATE_META[plate].short}.svg`, svg);
+          }
+          svgZip.file(`${folder}/job-settings.json`, JSON.stringify({
+            source: sourceName,
+            document: documentSettings,
+            settings,
+            plates: applicablePlates,
+            fill: "#000000",
+            vector: true,
+          }, null, 2));
+          const svgPackage = await svgZip.generateAsync({ type: "blob" });
+          downloadBlob(svgPackage, `${folder}.zip`);
+          setNotice("Vector SVG plate package exported");
+          return;
+        }
         const canvas = document.createElement("canvas");
         renderHalftone(source, canvas, settings, {
           plate: "composite",
           width,
           height,
           registration,
-          paper: "#ffffff",
+          registrationSize,
+          registrationOffset,
+          registrationWeight,
+          registrationShape,
+          registrationMode,
+          paper: documentSettings.background === "black" ? "#000000" : "#ffffff",
           document: documentSettings,
         });
-        const blob = await new Promise<Blob | null>((resolve) =>
-          canvas.toBlob(resolve, "image/png"),
-        );
+        const baseName = cleanName(sourceName);
+        let blob: Blob | null;
+        let filename: string;
+        if (kind === "tiff") {
+          blob = new Blob([encodeRgbaTiff(canvas)], { type: "image/tiff" });
+          filename = `${baseName}-halftone.tiff`;
+        } else {
+          blob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob(resolve, kind === "jpg" ? "image/jpeg" : "image/png", 0.92),
+          );
+          filename = `${baseName}-halftone.${kind}`;
+        }
         if (!blob) throw new Error("Export failed");
-        const dpiBlob = await withPngDpi(blob, DOCUMENT_DPI);
-        downloadBlob(dpiBlob, `${cleanName(sourceName)}-halftone.png`);
-        setNotice("Composite PNG exported");
+        const output = kind === "png" ? await withPngDpi(blob, DOCUMENT_DPI) : blob;
+        downloadBlob(output, filename);
+        setNotice(`Composite ${kind.toUpperCase()} exported`);
       } else {
         const zip = new JSZip();
-        for (const plate of PLATES) {
+        for (const plate of applicablePlates) {
           const canvas = document.createElement("canvas");
           renderHalftone(source, canvas, settings, {
             plate,
             width,
             height,
             registration,
-            paper: "#ffffff",
+            paper: documentSettings.background === "black" ? "#000000" : "#ffffff",
             monochromePlate: true,
             document: documentSettings,
+            registrationSize,
+            registrationOffset,
+            registrationWeight,
+            registrationShape,
+            registrationMode,
           });
           const plateBlob = await new Promise<Blob | null>((resolve) =>
             canvas.toBlob(resolve, "image/png"),
@@ -514,6 +753,11 @@ export default function HalftoneStudio() {
               document: documentSettings,
               settings,
               registration,
+              registrationSize,
+              registrationOffset,
+              registrationWeight,
+              registrationShape,
+              registrationMode,
               output: {
                 width,
                 height,
@@ -531,8 +775,8 @@ export default function HalftoneStudio() {
           ),
         );
         const blob = await zip.generateAsync({ type: "blob" });
-        downloadBlob(blob, `${cleanName(sourceName)}-CMYK-plates.zip`);
-        setNotice("CMYK plate package exported");
+        downloadBlob(blob, `${cleanName(sourceName)}-${settings.grayscale ? "K" : "CMYK"}-plates.zip`);
+        setNotice(`${settings.grayscale ? "Grayscale K" : "CMYK"} plate package exported`);
       }
     } catch {
       setNotice("Export could not be completed.");
@@ -557,14 +801,6 @@ export default function HalftoneStudio() {
     if (!STAGE_DEFINITIONS.some((stage) => stage.id === id)) return;
     setActiveStage(id as StudioStageId);
     setInspectorCollapsed(false);
-  }
-
-  function adjacentStage(delta: -1 | 1) {
-    const current = STAGE_DEFINITIONS.findIndex(
-      (stage) => stage.id === activeStage,
-    );
-    const next = STAGE_DEFINITIONS[current + delta];
-    if (next) jumpToStage(next.id);
   }
 
   return (
@@ -618,18 +854,39 @@ export default function HalftoneStudio() {
             </button>
             {exportOpen && (
               <div className="export-menu">
-                <button onClick={() => exportArtwork("composite")}>
+                <button onClick={() => exportArtwork("png")}>
                   <MonitorUp size={17} />
                   <span>
                     <strong>Composite PNG</strong>
                     <small>Ready for sharing and proofing</small>
                   </span>
                 </button>
+                <button onClick={() => exportArtwork("svg")}>
+                  <MonitorUp size={17} />
+                  <span>
+                    <strong>Vector SVG plate package</strong>
+                    <small>CMYK or K SVGs in a folder ZIP</small>
+                  </span>
+                </button>
+                <button onClick={() => exportArtwork("jpg")}>
+                  <MonitorUp size={17} />
+                  <span>
+                    <strong>Composite JPG</strong>
+                    <small>Flattened JPEG proof</small>
+                  </span>
+                </button>
+                <button onClick={() => exportArtwork("tiff")}>
+                  <MonitorUp size={17} />
+                  <span>
+                    <strong>Composite TIFF</strong>
+                    <small>Uncompressed RGBA TIFF proof</small>
+                  </span>
+                </button>
                 <button onClick={() => exportArtwork("plates")}>
                   <Layers3 size={17} />
                   <span>
-                    <strong>CMYK plate package</strong>
-                    <small>Four monochrome PNG plates + settings</small>
+                    <strong>{settings.grayscale ? "Grayscale K plate package" : "CMYK plate package"}</strong>
+                    <small>{settings.grayscale ? "One monochrome K PNG plate + settings" : "Four monochrome PNG plates + settings"}</small>
                   </span>
                 </button>
               </div>
@@ -651,25 +908,15 @@ export default function HalftoneStudio() {
             active={activeStage}
             onJump={jumpToStage}
           />
-          <div className="inspector-heading">
-            <div>
-              <span className="eyebrow">Recipe</span>
-              <h1>Build your separation</h1>
-            </div>
-            <button
-              className="icon-button"
-              title={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
-              aria-label={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
-              aria-expanded={!inspectorCollapsed}
-              onClick={() => setInspectorCollapsed((current) => !current)}
-            >
-              {inspectorCollapsed ? (
-                <PanelLeftOpen size={18} />
-              ) : (
-                <PanelLeftClose size={18} />
-              )}
-            </button>
-          </div>
+          <button
+            className="icon-button inspector-collapse-button"
+            title={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
+            aria-label={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
+            aria-expanded={!inspectorCollapsed}
+            onClick={() => setInspectorCollapsed((current) => !current)}
+          >
+            {inspectorCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
 
           <StagePanel
             id="artwork"
@@ -677,7 +924,6 @@ export default function HalftoneStudio() {
             label="Artwork"
             description="Confirm the source file before building the screen."
             active={activeStage === "artwork"}
-            onNext={() => adjacentStage(1)}
             onReset={resetArtwork}
           >
             <button className="upload-card" onClick={() => fileRef.current?.click()}>
@@ -750,56 +996,29 @@ export default function HalftoneStudio() {
                 }
               />
 
-              <NumericField
-                id="artworkOffsetX"
-                label="X offset"
-                value={documentSettings.offsetX}
-                min={-6000}
-                max={6000}
-                step={1}
-                unit="px"
-                defaultValue={DEFAULT_DOCUMENT_SETTINGS.offsetX}
-                hint="Horizontal placement in 240-DPI document pixels."
-                onChange={(offsetX) =>
-                  setDocumentSettings((current) => ({
-                    ...current,
-                    offsetX,
-                  }))
-                }
-              />
-
-              <NumericField
-                id="artworkOffsetY"
-                label="Y offset"
-                value={documentSettings.offsetY}
-                min={-6000}
-                max={6000}
-                step={1}
-                unit="px"
-                defaultValue={DEFAULT_DOCUMENT_SETTINGS.offsetY}
-                hint="Vertical placement in 240-DPI document pixels."
-                onChange={(offsetY) =>
-                  setDocumentSettings((current) => ({
-                    ...current,
-                    offsetY,
-                  }))
-                }
-              />
+              <div className="artwork-control-group">
+                <span className="artwork-control-label">Background</span>
+                <div className="segmented-control" role="group" aria-label="Background">
+                  {(["white", "black"] as const).map((background) => (
+                    <button
+                      key={background}
+                      type="button"
+                      data-testid={`artwork-background-${background}`}
+                      aria-pressed={documentSettings.background === background}
+                      onClick={() =>
+                        setDocumentSettings((current) => ({
+                          ...current,
+                          background,
+                        }))
+                      }
+                    >
+                      {titleCase(background)}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="artwork-action-row">
-                <button
-                  type="button"
-                  data-testid="artwork-center"
-                  onClick={() =>
-                    setDocumentSettings((current) => ({
-                      ...current,
-                      offsetX: 0,
-                      offsetY: 0,
-                    }))
-                  }
-                >
-                  Center
-                </button>
                 <button
                   type="button"
                   data-testid="artwork-fit"
@@ -825,8 +1044,6 @@ export default function HalftoneStudio() {
                         sheet.width,
                         sheet.height,
                       ),
-                      offsetX: 0,
-                      offsetY: 0,
                     }));
                   }}
                 >
@@ -881,33 +1098,114 @@ export default function HalftoneStudio() {
           </StagePanel>
 
           <StagePanel
-            id="screen"
+            id="halftone-cmyk"
             number="02"
-            label="Screen"
-            description="Set the dot geometry and tonal response."
-            active={activeStage === "screen"}
-            onBack={() => adjacentStage(-1)}
-            onNext={() => adjacentStage(1)}
-            onReset={resetScreen}
+            label="Halftone / CMYK"
+            description="Set the dot geometry, CMYK angles, and plate mix."
+            active={activeStage === "halftone-cmyk"}
+            onReset={resetHalftoneCmyk}
           >
-            <div className="field-grid">
+            <div className="halftone-cmyk-top-controls">
               <label className="select-field">
                 <span>Dot shape</span>
                 <select
                   value={settings.dotShape}
-                  onChange={(event) =>
-                    updateSetting(
-                      "dotShape",
-                      event.target.value as HalftoneSettings["dotShape"],
-                    )
-                  }
+                  onChange={(event) => {
+                    if (event.target.value === "custom") setCustomShapeOpen(true);
+                    else updateSetting("dotShape", event.target.value as HalftoneSettings["dotShape"]);
+                  }}
                 >
                   <option value="round">Round</option>
                   <option value="square">Square</option>
                   <option value="diamond">Diamond</option>
                   <option value="line">Line</option>
+                  <option value="triangle">Triangle</option>
+                  <option value="cross">Cross</option>
+                  <option value="circle-outline">Circle outline</option>
+                  <option value="custom">Custom</option>
                 </select>
               </label>
+              <label className="select-field">
+                <span>Color mode</span>
+                <select value={settings.grayscale ? "grayscale" : "cmyk"}
+                  onChange={(event) => updateSetting("grayscale", event.target.value === "grayscale")}>
+                  <option value="cmyk">CMYK</option>
+                  <option value="grayscale">Grayscale (K)</option>
+                </select>
+              </label>
+              {settings.grayscale && (
+                <label className="toggle-row">
+                  <span>
+                    <strong>Invert grayscale</strong>
+                    <small>Invert the black and white image.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    data-testid="grayscale-invert"
+                    checked={settings.invert}
+                    onChange={(event) => updateSetting("invert", event.target.checked)}
+                  />
+                </label>
+              )}
+            </div>
+            {settings.customShape && (
+              <div className="custom-shape-current">
+                <span data-testid="current-custom-shape">{settings.customShape.filename}</span>
+                <button type="button" className="button secondary" onClick={() => setCustomShapeOpen(true)}>Replace SVG</button>
+              </div>
+            )}
+            <div className="halftone-cmyk-preview-row">
+              <div className="screen-angle-box">
+                <div className="halftone-cmyk-section-label">CMYK angles</div>
+                <span className="screen-angle-viewing" data-testid="active-plate-label">
+                  {activePlate === "composite" ? "Viewing: Composite" : `Viewing: ${PLATE_META[activePlate].label}`}
+                </span>
+                <InkRail
+                  activePlate={activePlate}
+                  settings={settings}
+                  onSolo={handleSolo}
+                  onToggleVisible={handleToggleVisible}
+                  onAngleChange={handleAngleChange}
+                />
+                <label className="select-field cmyk-preset-field">
+                  <span>CMYK presets</span>
+                  <select
+                    data-testid="cmyk-preset"
+                    defaultValue=""
+                    onChange={(event) => applyCmykPreset(event.target.value)}
+                  >
+                    <option value="" disabled>Select a CMYK preset</option>
+                    {CMYK_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="halftone-cmyk-header">
+              <div className="pattern-preview-card">
+                <div>
+                  <strong>Dot pattern</strong>
+                  <small>Live CMYK screen preview</small>
+                </div>
+                <button
+                  type="button"
+                  className="pattern-preview-button"
+                  onClick={cyclePatternPlate}
+                  title="Click to cycle the active plate"
+                  aria-label={`Dot pattern preview, viewing ${activePlate === "composite" ? "composite" : PLATE_META[activePlate].label}. Click to cycle plates.`}
+                >
+                  <canvas ref={patternPreviewRef} width={80} height={80} data-testid="cmyk-pattern-preview" aria-label="CMYK dot pattern preview" />
+                </button>
+              </div>
+            </div>
+            </div>
+            <div className="field-grid">
+              {settings.dotShape === "circle-outline" && (
+                <NumericField id="strokeWidth" label="Outline stroke" value={settings.strokeWidth ?? 1}
+                  min={0.25} max={10} step={0.01} unit="px" defaultValue={1}
+                  hint="Thickness inside the circle, in 240-DPI document pixels."
+                  onChange={(value) => updateSetting("strokeWidth", value)} />
+              )}
               <NumericField
                 id="cellSize"
                 label="Cell size"
@@ -920,68 +1218,78 @@ export default function HalftoneStudio() {
                 hint="At 240 DPI, 16 px yields about 15 LPI; 4 px yields about 60 LPI."
                 onChange={(value) => updateSetting("cellSize", value)}
               />
-              <NumericField
-                id="contrast"
-                label="Contrast"
-                value={settings.contrast}
-                min={0.5}
-                max={2}
-                step={0.05}
-                unit="×"
-                defaultValue={DEFAULT_SETTINGS.contrast}
-                hint="Expands or compresses the tonal range before dots are built."
-                onChange={(value) => updateSetting("contrast", value)}
-              />
-              <NumericField
-                id="exposure"
-                label="Exposure"
-                value={Math.round(settings.exposure * 100)}
-                min={-30}
-                max={30}
-                step={1}
-                unit="%"
-                defaultValue={DEFAULT_SETTINGS.exposure * 100}
-                hint="Shifts overall coverage toward more ink or more paper."
-                onChange={(value) => updateSetting("exposure", value / 100)}
-              />
+              <NumericField id="frayedXEdge" label="Frayed X edge" value={settings.frayedXEdge}
+                min={0} max={100} step={1} unit="px" defaultValue={0}
+                hint="Frays the left and right edges of the halftone field."
+                onChange={(value) => updateSetting("frayedXEdge", value)} />
+              <NumericField id="frayedYEdge" label="Frayed Y edge" value={settings.frayedYEdge}
+                min={0} max={100} step={1} unit="px" defaultValue={0}
+                hint="Frays the top and bottom edges of the halftone field."
+                onChange={(value) => updateSetting("frayedYEdge", value)} />
             </div>
           </StagePanel>
 
           <StagePanel
-            id="separation"
+            id="diffusion"
             number="03"
-            label="Separation"
-            description="Check each process plate and its screen angle."
-            active={activeStage === "separation"}
-            onBack={() => adjacentStage(-1)}
-            onNext={() => adjacentStage(1)}
-            onReset={resetSeparation}
+            label="Diffusion"
+            description="Shape ink distribution with diffusion and glitch controls."
+            active={activeStage === "diffusion"}
+            onReset={resetDiffusion}
           >
-            <span
-              className="separation-viewing-label"
-              data-testid="active-plate-label"
-            >
-              Viewing:{" "}
-              {activePlate === "composite"
-                ? "Composite"
-                : PLATE_META[activePlate].label}
-            </span>
-            <InkRail
-              activePlate={activePlate}
-              settings={settings}
-              onSolo={handleSolo}
-              onToggleVisible={handleToggleVisible}
-              onAngleChange={handleAngleChange}
-            />
+            <label className="toggle-row">
+              <span>
+                <strong>Enable diffusion</strong>
+                <small>Quantize coverage with an error-diffusion texture.</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.diffusionEnabled ?? false}
+                onChange={(event) => updateSetting("diffusionEnabled", event.target.checked)}
+              />
+            </label>
+            <div className="diffusion-section-label">Diffusion</div>
+            <div className="field-grid">
+              <label className="select-field">
+                <span>Algorithm</span>
+                <select
+                  value={settings.diffusionAlgorithm ?? "floyd-steinberg"}
+                  onChange={(event) => updateSetting("diffusionAlgorithm", event.target.value as HalftoneSettings["diffusionAlgorithm"])}
+                >
+                  <option value="none">None</option>
+                  <option value="floyd-steinberg">Floyd-Steinberg</option>
+                  <option value="jarvis-judice-ninke">Jarvis-Judice-Ninke</option>
+                  <option value="stucki">Stucki</option>
+                  <option value="burkes">Burkes</option>
+                  <option value="atkinson">Atkinson</option>
+                </select>
+              </label>
+              <label className="select-field">
+                <span>Modulation</span>
+                <select
+                  value={settings.diffusionModulation ?? "none"}
+                  onChange={(event) => updateSetting("diffusionModulation", event.target.value as HalftoneSettings["diffusionModulation"])}
+                >
+                  {(["none", "column", "row", "dispersed", "medium", "heavy", "circuit", "tilt", "grid"] as const).map((mode) => (
+                    <option key={mode} value={mode}>{titleCase(mode)}</option>
+                  ))}
+                </select>
+              </label>
+              <NumericField id="diffusionModStrength" label="Modulation strength" value={Math.round((settings.diffusionModStrength ?? 0.5) * 100)} min={0} max={100} step={1} unit="%" defaultValue={50} onChange={(value) => updateSetting("diffusionModStrength", value / 100)} />
+              <NumericField id="diffusionIntensity" label="Intensity" value={Math.round((settings.diffusionIntensity ?? 0.5) * 100)} min={0} max={100} step={1} unit="%" defaultValue={50} onChange={(value) => updateSetting("diffusionIntensity", value / 100)} />
+              <NumericField id="diffusionLevels" label="Levels" value={settings.diffusionLevels ?? 8} min={2} max={32} step={1} unit="" defaultValue={8} onChange={(value) => updateSetting("diffusionLevels", value)} />
+              <NumericField id="diffusionSharpenStrength" label="Sharpen strength" value={Math.round((settings.diffusionSharpenStrength ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionSharpenStrength", value / 100)} />
+              <NumericField id="diffusionSharpenRadius" label="Sharpen radius" value={settings.diffusionSharpenRadius ?? 1} min={1} max={10} step={1} unit="px" defaultValue={1} onChange={(value) => updateSetting("diffusionSharpenRadius", value)} />
+              <NumericField id="diffusionDenoise" label="Denoise / noise" value={Math.round((settings.diffusionDenoise ?? 0) * 100)} min={-100} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionDenoise", value / 100)} />
+            </div>
           </StagePanel>
 
           <StagePanel
             id="output"
-            number="04"
-            label="Output"
+            number="05"
+            label="Output / Registration"
             description="Finish the plate package and press handoff."
             active={activeStage === "output"}
-            onBack={() => adjacentStage(-1)}
             onReset={resetOutput}
             final
           >
@@ -993,32 +1301,30 @@ export default function HalftoneStudio() {
               <input
                 type="checkbox"
                 checked={registration}
-                onChange={(event) => setRegistration(event.target.checked)}
+                onChange={(event) => setRegistrationEnabled(event.target.checked)}
               />
             </label>
-            <label className="toggle-row">
-              <span>
-                <strong>Invert dots</strong>
-                <small>Swap ink and paper coverage</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={settings.invert}
-                onChange={(event) => updateSetting("invert", event.target.checked)}
-              />
+            <label className="select-field">
+              <span>Registration layout</span>
+              <select
+                value={registrationMode}
+                disabled={!registration}
+                onChange={(event) => setRegistrationMode(event.target.value as "corners" | "centered")}
+              >
+                <option value="corners">Four corners</option>
+                <option value="centered">Top / bottom centered</option>
+              </select>
             </label>
-            <NumericField
-              id="opacity"
-              label="Ink density"
-              value={Math.round(settings.opacity * 100)}
-              min={35}
-              max={100}
-              step={1}
-              unit="%"
-              defaultValue={DEFAULT_SETTINGS.opacity * 100}
-              hint="Changes the opacity of every plate in the composite proof."
-              onChange={(value) => updateSetting("opacity", value / 100)}
-            />
+            <NumericField id="registrationSize" label="Registration size" value={registrationSize} min={20} max={600} step={1} unit="px" defaultValue={120} onChange={setRegistrationSize} />
+            <NumericField id="registrationOffset" label="Registration offset" value={registrationOffset} min={10} max={1000} step={1} unit="px" defaultValue={120} onChange={setRegistrationOffset} />
+            <NumericField id="registrationWeight" label="Registration weight" value={registrationWeight} min={1} max={20} step={0.5} unit="px" defaultValue={2} onChange={setRegistrationWeight} />
+            <div className="registration-import-row">
+              <input ref={registrationFileRef} type="file" accept=".svg,image/svg+xml" hidden onChange={(event) => void onRegistrationFileChange(event)} />
+              <button type="button" className="button secondary" onClick={() => registrationFileRef.current?.click()}>
+                {registrationShape ? "Replace registration SVG" : "Import registration SVG"}
+              </button>
+              {registrationShape && <span>{registrationShape.filename}</span>}
+            </div>
             <section className="preflight-card" aria-labelledby="preflight-title">
               <header className="preflight-heading">
                 <span>
@@ -1048,7 +1354,7 @@ export default function HalftoneStudio() {
                   label="Screen angles"
                   value={
                     sharedAngleGroups.length === 0
-                      ? "All four angles are distinct"
+                      ? settings.grayscale ? "Grayscale uses the K screen angle" : "All four angles are distinct"
                       : sharedAngleGroups
                           .map(
                             ([angle, plates]) =>
@@ -1093,6 +1399,50 @@ export default function HalftoneStudio() {
               </button>
             </section>
           </StagePanel>
+
+          <StagePanel
+            id="glitch"
+            number="04"
+            label="Glitch"
+            description="Slice, warp, smear, corrupt, and sort the source field."
+            active={activeStage === "glitch"}
+            onReset={resetGlitch}
+          >
+            {!settings.diffusionEnabled ? <>
+              <div className="diffusion-section-label">Slice and warp</div>
+              <div className="field-grid">
+              <NumericField id="sliceShift" label="Slice shift" value={settings.sliceShift ?? 0} min={0} max={150} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("sliceShift", value)} />
+              <NumericField id="sliceSize" label="Slice size" value={settings.sliceSize ?? 20} min={2} max={200} step={1} unit="px" defaultValue={20} onChange={(value) => updateSetting("sliceSize", value)} />
+              <NumericField id="verticalSliceShift" label="Vertical slice shift" value={settings.verticalSliceShift ?? 0} min={0} max={150} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("verticalSliceShift", value)} />
+              <NumericField id="verticalSliceSize" label="Vertical slice size" value={settings.verticalSliceSize ?? 20} min={2} max={200} step={1} unit="px" defaultValue={20} onChange={(value) => updateSetting("verticalSliceSize", value)} />
+              <NumericField id="gridWarp" label="Grid warp" value={settings.gridWarp ?? 0} min={0} max={200} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("gridWarp", value)} />
+              <NumericField id="warpScale" label="Warp scale" value={settings.warpScale ?? 100} min={10} max={500} step={1} unit="%" defaultValue={100} onChange={(value) => updateSetting("warpScale", value)} />
+              </div>
+            </> : <>
+              <div className="diffusion-section-label">Diffusion glitches</div>
+              <div className="field-grid">
+                <NumericField id="brokenKernel" label="Broken kernel" value={Math.round((settings.brokenKernel ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("brokenKernel", value / 100)} />
+                <NumericField id="directionalBias" label="Directional bias" value={Math.round((settings.directionalBias ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("directionalBias", value / 100)} />
+                <NumericField id="directionalBiasAngle" label="Bias angle" value={settings.directionalBiasAngle ?? 0} min={0} max={360} step={1} unit="°" defaultValue={0} onChange={(value) => updateSetting("directionalBiasAngle", value)} />
+                <NumericField id="errorOverflow" label="Error overflow" value={Math.round((settings.errorOverflow ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("errorOverflow", value / 100)} />
+                <NumericField id="diffusionReset" label="Diffusion reset" value={Math.round((settings.diffusionReset ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionReset", value / 100)} />
+                <NumericField id="crossChannelBleed" label="Cross-channel bleed" value={Math.round((settings.crossChannelBleed ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("crossChannelBleed", value / 100)} />
+              </div>
+            </>}
+            <div className="diffusion-section-label">Datamosh</div>
+            <div className="field-grid">
+              <NumericField id="smearDrag" label="Smear drag" value={Math.round((settings.smearDrag ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("smearDrag", value / 100)} />
+              <NumericField id="smearLength" label="Smear length" value={settings.smearLength ?? 24} min={4} max={120} step={1} unit="px" defaultValue={24} onChange={(value) => updateSetting("smearLength", value)} />
+              <label className="toggle-row"><span><strong>Vertical smear</strong><small>Drag smear along the Y axis.</small></span><input type="checkbox" checked={settings.smearVertical ?? false} onChange={(event) => updateSetting("smearVertical", event.target.checked)} /></label>
+              <NumericField id="macroblockCorrupt" label="Macroblock corrupt" value={Math.round((settings.macroblockCorrupt ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("macroblockCorrupt", value / 100)} />
+              <NumericField id="macroblockDropout" label="Dropout mix" value={Math.round((settings.macroblockDropout ?? 0.25) * 100)} min={0} max={100} step={1} unit="%" defaultValue={25} onChange={(value) => updateSetting("macroblockDropout", value / 100)} />
+              <NumericField id="blockShift" label="Block shift" value={Math.round((settings.blockShift ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("blockShift", value / 100)} />
+              <NumericField id="blockShiftSize" label="Block size" value={settings.blockShiftSize ?? 16} min={4} max={64} step={1} unit="px" defaultValue={16} onChange={(value) => updateSetting("blockShiftSize", value)} />
+              <NumericField id="channelDesync" label="Channel desync" value={Math.round((settings.channelDesync ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("channelDesync", value / 100)} />
+              <NumericField id="bitmapSort" label="Bitmap sort" value={Math.round((settings.bitmapSort ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("bitmapSort", value / 100)} />
+              <label className="toggle-row"><span><strong>Vertical bitmap sort</strong><small>Sort along the Y axis.</small></span><input type="checkbox" checked={settings.bitmapSortVertical ?? false} onChange={(event) => updateSetting("bitmapSortVertical", event.target.checked)} /></label>
+            </div>
+          </StagePanel>
         </aside>
 
         <section
@@ -1101,17 +1451,11 @@ export default function HalftoneStudio() {
             dragging ? "dragging" : "",
             spaceHeld ? "pan-armed" : "",
             panning ? "panning" : "",
-            activeStage === "artwork" && !spaceHeld ? "artwork-placeable" : "",
-            placingArtwork ? "artwork-placing" : "",
           ]
             .filter(Boolean)
             .join(" ")}
           data-testid="stage-surface"
           data-pan-armed={spaceHeld ? "true" : "false"}
-          data-artwork-placeable={
-            activeStage === "artwork" && !spaceHeld ? "true" : "false"
-          }
-          data-artwork-dragging={placingArtwork ? "true" : "false"}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragging(true);
@@ -1158,11 +1502,7 @@ export default function HalftoneStudio() {
             <div className="view-status">
               <Sparkles size={14} />
               <span>
-                {activeStage === "artwork"
-                  ? placingArtwork
-                    ? "Placing artwork in document pixels"
-                    : "Drag artwork to place · Space-drag pans proof"
-                  : "Live browser preview"}
+                {activeStage === "artwork" ? "Centered artwork proof · Space-drag pans" : "Live browser preview"}
               </span>
             </div>
           </div>
@@ -1180,96 +1520,13 @@ export default function HalftoneStudio() {
                 <canvas
                   ref={canvasRef}
                   data-testid="artwork-canvas"
-                  aria-label="Live CMYK halftone preview"
-                  onPointerDown={(event) => {
-                    if (
-                      activeStage !== "artwork" ||
-                      spaceHeld ||
-                      event.button !== 0
-                    ) {
-                      return;
-                    }
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    if (
-                      event.clientX < bounds.left ||
-                      event.clientX > bounds.right ||
-                      event.clientY < bounds.top ||
-                      event.clientY > bounds.bottom ||
-                      bounds.width <= 0 ||
-                      bounds.height <= 0
-                    ) {
-                      return;
-                    }
-                    const sheet = getSheetPixelDimensions(
-                      documentSettings.sheetSize,
-                      documentSettings.orientation,
-                    );
-                    event.preventDefault();
-                    event.stopPropagation();
-                    artworkPlacementStart.current = {
-                      x: event.clientX,
-                      y: event.clientY,
-                      offsetX: documentSettings.offsetX,
-                      offsetY: documentSettings.offsetY,
-                      pixelsPerScreenX: sheet.width / bounds.width,
-                      pixelsPerScreenY: sheet.height / bounds.height,
-                    };
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    setPlacingArtwork(true);
-                  }}
-                  onPointerMove={(event) => {
-                    const start = artworkPlacementStart.current;
-                    if (!start || spaceHeld) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const offsetX = Math.min(
-                      6000,
-                      Math.max(
-                        -6000,
-                        start.offsetX +
-                          Math.round(
-                            (event.clientX - start.x) * start.pixelsPerScreenX,
-                          ),
-                      ),
-                    );
-                    const offsetY = Math.min(
-                      6000,
-                      Math.max(
-                        -6000,
-                        start.offsetY +
-                          Math.round(
-                            (event.clientY - start.y) * start.pixelsPerScreenY,
-                          ),
-                      ),
-                    );
-                    setDocumentSettings((current) => ({
-                      ...current,
-                      offsetX,
-                      offsetY,
-                    }));
-                  }}
-                  onPointerUp={(event) => {
-                    if (!artworkPlacementStart.current) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    artworkPlacementStart.current = null;
-                    setPlacingArtwork(false);
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      event.currentTarget.releasePointerCapture(event.pointerId);
-                    }
-                  }}
-                  onPointerCancel={(event) => {
-                    if (!artworkPlacementStart.current) return;
-                    event.stopPropagation();
-                    artworkPlacementStart.current = null;
-                    setPlacingArtwork(false);
-                  }}
+                  aria-label={settings.grayscale ? "Live grayscale halftone preview" : "Live CMYK halftone preview"}
                 />
                 <span className="artboard-label" data-testid="artboard-label">
                   {activePlate === "composite"
                     ? hiddenPlates.length === 0
-                      ? "Composite proof"
-                      : hiddenPlates.length === PLATES.length
+                      ? settings.grayscale ? "Grayscale proof (K)" : "Composite proof"
+                      : hiddenPlates.length === applicablePlates.length
                         ? "Composite proof — all plates hidden"
                         : `Composite proof — ${hiddenPlates
                             .map((plate) => PLATE_META[plate].short)
@@ -1368,6 +1625,15 @@ export default function HalftoneStudio() {
       )}
 
       <SessionBadge />
+      {customShapeOpen && (
+        <CustomShapeDialog current={settings.customShape}
+          onCancel={() => setCustomShapeOpen(false)}
+          onApply={(customShape) => {
+            setSettings((current) => ({ ...current, dotShape: "custom", customShape }));
+            setCustomShapeOpen(false);
+            setNotice(`Custom shape loaded: ${customShape.filename}`);
+          }} />
+      )}
     </main>
   );
 }
@@ -1379,8 +1645,6 @@ type StagePanelProps = {
   description: string;
   active: boolean;
   final?: boolean;
-  onBack?: () => void;
-  onNext?: () => void;
   onReset?: () => void;
   children: ReactNode;
 };
@@ -1392,8 +1656,6 @@ function StagePanel({
   description,
   active,
   final = false,
-  onBack,
-  onNext,
   onReset,
   children,
 }: StagePanelProps) {
@@ -1425,20 +1687,6 @@ function StagePanel({
         ) : null}
       </header>
       <div className="control-step-body">{children}</div>
-      <nav className="control-step-nav" aria-label={`${label} stage navigation`}>
-        {onBack ? (
-          <button type="button" className="stage-nav-button" onClick={onBack}>
-            Previous
-          </button>
-        ) : (
-          <span />
-        )}
-        {onNext ? (
-          <button type="button" className="stage-nav-button" onClick={onNext}>
-            Next stage
-          </button>
-        ) : null}
-      </nav>
     </section>
   );
 }
@@ -1485,4 +1733,49 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.download = filename;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function encodeRgbaTiff(canvas: HTMLCanvasElement) {
+  const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+  if (!pixels) throw new Error("TIFF export could not read the rendered canvas");
+
+  const entryCount = 10;
+  const ifdOffset = 8;
+  const bitsOffset = ifdOffset + 2 + entryCount * 12 + 4;
+  const pixelOffset = bitsOffset + 8;
+  const buffer = new ArrayBuffer(pixelOffset + pixels.length);
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  view.setUint16(0, 0x4949, false);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, ifdOffset, true);
+  view.setUint16(ifdOffset, entryCount, true);
+
+  let entry = ifdOffset + 2;
+  const writeEntry = (tag: number, type: number, count: number, value: number) => {
+    view.setUint16(entry, tag, true);
+    view.setUint16(entry + 2, type, true);
+    view.setUint32(entry + 4, count, true);
+    if (type === 3 && count === 1) view.setUint16(entry + 8, value, true);
+    else view.setUint32(entry + 8, value, true);
+    entry += 12;
+  };
+
+  writeEntry(256, 4, 1, canvas.width);
+  writeEntry(257, 4, 1, canvas.height);
+  writeEntry(258, 3, 4, bitsOffset);
+  writeEntry(259, 3, 1, 1);
+  writeEntry(262, 3, 1, 2);
+  writeEntry(273, 4, 1, pixelOffset);
+  writeEntry(277, 3, 1, 4);
+  writeEntry(278, 4, 1, canvas.height);
+  writeEntry(279, 4, 1, pixels.length);
+  writeEntry(284, 3, 1, 1);
+  view.setUint32(entry, 0, true);
+  view.setUint16(bitsOffset, 8, true);
+  view.setUint16(bitsOffset + 2, 8, true);
+  view.setUint16(bitsOffset + 4, 8, true);
+  view.setUint16(bitsOffset + 6, 8, true);
+  bytes.set(pixels, pixelOffset);
+  return buffer;
 }

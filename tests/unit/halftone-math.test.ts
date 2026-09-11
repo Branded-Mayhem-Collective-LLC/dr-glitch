@@ -4,14 +4,15 @@ import {
   clamp,
   coverageFor,
   estimateGridPoints,
+  applyDiffusion,
   rgbToCmyk,
   type HalftoneSettings,
 } from "../../src/studio/halftone";
 
 const base: HalftoneSettings = {
   cellSize: 12,
-  contrast: 1,
-  exposure: 0,
+  frayedXEdge: 0,
+  frayedYEdge: 0,
   opacity: 0.84,
   dotShape: "round",
   invert: false,
@@ -67,16 +68,9 @@ describe("coverageFor", () => {
     expect(coverageFor("cyan", 255, 0, 0, inverted)).toBe(1);
   });
 
-  it("clamps exposure overdrive into range", () => {
-    const hot = { ...base, exposure: 5 };
-    expect(coverageFor("cyan", 128, 255, 255, hot)).toBe(1);
-  });
-
   it("does not reintroduce process color into neutral gray", () => {
-    const aggressive = { ...base, contrast: 4, exposure: 5 };
-
     for (const plate of ["cyan", "magenta", "yellow"] as const) {
-      expect(coverageFor(plate, 128, 128, 128, aggressive)).toBe(0);
+      expect(coverageFor(plate, 128, 128, 128, base)).toBe(0);
     }
   });
 
@@ -90,11 +84,25 @@ describe("coverageFor", () => {
     expect(coverageFor("yellow", 0, 0, 255, base)).toBeCloseTo(0);
   });
 
-  it("scales deviation from mid-grey by contrast", () => {
-    const flat = { ...base, contrast: 0 };
-    expect(coverageFor("cyan", 0, 255, 255, flat)).toBeCloseTo(0.5);
-    const punchy = { ...base, contrast: 2 };
-    expect(coverageFor("cyan", 191, 255, 255, punchy)).toBeCloseTo(0.0, 1);
+  it("uses unadjusted process coverage", () => {
+    expect(coverageFor("cyan", 0, 255, 255, base)).toBeCloseTo(1);
+    expect(coverageFor("cyan", 191, 255, 255, base)).toBeCloseTo(1 - 191 / 255);
+  });
+});
+
+describe("applyDiffusion", () => {
+  const diffusion = { ...base, diffusionEnabled: true, diffusionIntensity: 1, diffusionLevels: 4 };
+
+  it("changes output when the selected algorithm changes", () => {
+    const floyd = applyDiffusion(0.5, 3, 4, { ...diffusion, diffusionAlgorithm: "floyd-steinberg" });
+    const burkes = applyDiffusion(0.5, 3, 4, { ...diffusion, diffusionAlgorithm: "burkes" });
+    expect(floyd).not.toBe(burkes);
+  });
+
+  it("uses sharpen radius as part of the sharpening response", () => {
+    const narrow = applyDiffusion(0.35, 3, 4, { ...diffusion, diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 1 });
+    const wide = applyDiffusion(0.35, 3, 4, { ...diffusion, diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 8 });
+    expect(narrow).not.toBe(wide);
   });
 });
 

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 async function openSeparation(page: Page) {
-  await page.getByTestId("stage-separation").click();
+  await page.getByTestId("stage-halftone-cmyk").click();
 }
 
 function contrastRatio(foreground: string, background: string) {
@@ -54,7 +54,7 @@ function pngChunks(bytes: Uint8Array) {
 test.describe("ink rail", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     await openSeparation(page);
   });
 
@@ -108,7 +108,7 @@ test.describe("ink rail", () => {
 test.describe("ink rail — keyboard and screen-reader parity", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     await openSeparation(page);
   });
 
@@ -208,7 +208,7 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
 test.describe("composite proof label — hidden-plate coherence", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     await openSeparation(page);
   });
 
@@ -235,7 +235,7 @@ test.describe("composite proof label — hidden-plate coherence", () => {
 test.describe("channel tinting", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     await openSeparation(page);
   });
 
@@ -267,8 +267,8 @@ test.describe("channel tinting", () => {
 test.describe("typed numerics", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
-    await page.getByTestId("stage-screen").click();
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await page.getByTestId("stage-halftone-cmyk").click();
   });
 
   test("cell size accepts a typed value", async ({ page }) => {
@@ -300,7 +300,7 @@ test.describe("typed numerics", () => {
     await field.fill("abc");
     await field.press("Enter");
     await expect(field).toHaveValue(before);
-    await expect(page.locator("canvas").first()).toBeVisible();
+    await expect(page.getByTestId("artwork-canvas")).toBeVisible();
   });
 
   test("empty and whitespace-only numeric drafts revert", async ({ page }) => {
@@ -367,30 +367,6 @@ test.describe("typed numerics", () => {
     await page.mouse.up();
 
     await expect(field).toHaveValue("17");
-  });
-
-  test("Alt/Option scrubs at 0.1× and arrow keys nudge predictably", async ({
-    page,
-  }) => {
-    const field = page.getByTestId("numeric-contrast");
-    const scrub = page.getByTestId("numeric-contrast-scrub");
-    const box = await scrub.boundingBox();
-    const x = box!.x + box!.width / 2;
-    const y = box!.y + box!.height / 2;
-
-    await page.keyboard.down("Alt");
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + 10, y);
-    await page.mouse.up();
-    await page.keyboard.up("Alt");
-    await expect(field).toHaveValue("1.05");
-
-    await field.focus();
-    await page.keyboard.press("ArrowUp");
-    await expect(field).toHaveValue("1.1");
-    await page.keyboard.press("Shift+ArrowUp");
-    await expect(field).toHaveValue("1.6");
   });
 
   test("left-panel numerics expose synchronized sliders", async ({ page }) => {
@@ -494,7 +470,7 @@ test.describe("typed numerics", () => {
 test.describe("Artwork stage — restored layout controls", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     await page.getByTestId("stage-artwork").click();
   });
 
@@ -521,16 +497,6 @@ test.describe("Artwork stage — restored layout controls", () => {
     await expect(
       artwork.getByTestId("numeric-artworkScale-scrub"),
     ).toBeVisible();
-    for (const axis of ["X", "Y"]) {
-      const offset = artwork.getByTestId(`numeric-artworkOffset${axis}`);
-      await expect(offset).toHaveValue("0");
-      await expect(offset).toHaveAttribute("inputmode", "decimal");
-      await expect(
-        artwork.getByTestId(`numeric-artworkOffset${axis}-slider`),
-      ).toBeVisible();
-    }
-
-    await expect(artwork.getByTestId("artwork-center")).toBeVisible();
     await expect(artwork.getByTestId("artwork-fit")).toBeVisible();
 
     const mirror = artwork.getByTestId("artwork-mirror");
@@ -543,89 +509,9 @@ test.describe("Artwork stage — restored layout controls", () => {
       artwork.getByTestId("artwork-mirror-direction-vertical"),
     ).toBeVisible();
 
-    const stage = page.getByTestId("stage-surface");
-    await expect(stage).toHaveAttribute("data-artwork-placeable", "true");
-    await expect(stage.locator(".view-status")).toContainText(
-      "Drag artwork to place",
+    await expect(page.getByTestId("stage-surface").locator(".view-status")).toContainText(
+      "Centered artwork proof",
     );
-    await expect(page.getByTestId("artwork-canvas")).toHaveCSS("cursor", "move");
-  });
-
-  test("typed offsets update and Center returns both axes to zero", async ({
-    page,
-  }) => {
-    const artwork = page
-      .getByTestId("inspector")
-      .getByTestId("stage-panel-artwork");
-    const offsetX = artwork.getByTestId("numeric-artworkOffsetX");
-    const offsetY = artwork.getByTestId("numeric-artworkOffsetY");
-
-    await offsetX.fill("425");
-    await offsetX.press("Enter");
-    await offsetY.fill("-275");
-    await offsetY.press("Enter");
-
-    await expect(offsetX).toHaveValue("425");
-    await expect(offsetY).toHaveValue("-275");
-
-    await artwork.getByTestId("artwork-center").click();
-    await expect(offsetX).toHaveValue("0");
-    await expect(offsetY).toHaveValue("0");
-  });
-
-  test("canvas drag places artwork and updates the job ticket without moving proof pan", async ({
-    page,
-  }) => {
-    await page.evaluate(() => {
-      Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: {
-          writeText: async (text: string) => {
-            (window as typeof window & { __copiedTicket?: string }).__copiedTicket =
-              text;
-          },
-        },
-      });
-    });
-
-    const stage = page.getByTestId("stage-surface");
-    const canvas = page.getByTestId("artwork-canvas");
-    const artboard = page.locator(".artboard-wrap");
-    const beforePan = await artboard.evaluate(
-      (element) => element.style.transform,
-    );
-    const bounds = await canvas.boundingBox();
-    expect(bounds).not.toBeNull();
-
-    await page.mouse.move(
-      bounds!.x + bounds!.width / 2,
-      bounds!.y + bounds!.height / 2,
-    );
-    await page.mouse.down();
-    await expect(stage).toHaveAttribute("data-artwork-dragging", "true");
-    await page.mouse.move(
-      bounds!.x + bounds!.width / 2 + 30,
-      bounds!.y + bounds!.height / 2 + 18,
-    );
-    await page.mouse.up();
-
-    const offsetX = page.getByTestId("numeric-artworkOffsetX");
-    const offsetY = page.getByTestId("numeric-artworkOffsetY");
-    await expect(offsetX).not.toHaveValue("0");
-    await expect(offsetY).not.toHaveValue("0");
-    await expect(stage).toHaveAttribute("data-artwork-dragging", "false");
-    expect(await artboard.evaluate((element) => element.style.transform)).toBe(
-      beforePan,
-    );
-
-    const placedX = await offsetX.inputValue();
-    const placedY = await offsetY.inputValue();
-    await page.getByTestId("stage-output").click();
-    await page.getByRole("button", { name: "Copy job ticket" }).click();
-    const ticket = await page.evaluate(
-      () => (window as typeof window & { __copiedTicket?: string }).__copiedTicket,
-    );
-    expect(ticket).toContain(`Offset: X ${placedX}px · Y ${placedY}px`);
   });
 
   test("Scale supports direct typing and value scrubbing", async ({ page }) => {
@@ -685,22 +571,18 @@ test.describe("Artwork stage — restored layout controls", () => {
 test.describe("stage spine and keyboard", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
   });
 
   test("all four stages are visible without scrolling", async ({ page }) => {
-    for (const label of ["ARTWORK", "SCREEN", "SEPARATION", "OUTPUT"]) {
-      await expect(
-        page.getByTestId(`stage-${label.toLowerCase()}`),
-      ).toBeInViewport();
+    for (const id of ["artwork", "halftone-cmyk", "diffusion", "output"]) {
+      await expect(page.getByTestId(`stage-${id}`)).toBeInViewport();
     }
   });
 
-  test("stage numbers are zero-padded and completion is explicit", async ({
+  test("stage labels have no numeric badges and completion is explicit", async ({
     page,
   }) => {
-    await expect(page.getByTestId("stage-artwork")).toContainText("01");
-    await expect(page.getByTestId("stage-output")).toContainText("04");
     await expect(page.getByTestId("stage-artwork")).toHaveAttribute(
       "data-complete",
       "true",
@@ -714,9 +596,9 @@ test.describe("stage spine and keyboard", () => {
     page,
   }) => {
     for (const [id, label] of [
-      ["artwork", "ARTWORK"],
-      ["screen", "SCREEN"],
-      ["separation", "SEPARATION"],
+      ["artwork", "ARTBOARD"],
+      ["halftone-cmyk", "HALFTONE / CMYK"],
+      ["diffusion", "DIFFUSION"],
       ["output", "OUTPUT"],
     ]) {
       const measurements = await page.getByTestId(`stage-${id}`).evaluate(
@@ -739,7 +621,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("inactive stage labels meet WCAG AA contrast", async ({ page }) => {
-    const colors = await page.getByTestId("stage-screen").evaluate((button) => {
+    const colors = await page.getByTestId("stage-halftone-cmyk").evaluate((button) => {
       const label = button.querySelector<HTMLElement>(".stage-label")!;
       const spine = button.closest<HTMLElement>(".stage-spine")!;
       return {
@@ -756,7 +638,7 @@ test.describe("stage spine and keyboard", () => {
   test("clicking a stage switches to a distinct inspector panel", async ({
     page,
   }) => {
-    const ids = ["artwork", "screen", "separation", "output"] as const;
+    const ids = ["artwork", "halftone-cmyk", "diffusion", "output"] as const;
     for (const id of ids) {
       await page.getByTestId(`stage-${id}`).click();
       await expect(page.getByTestId(`stage-${id}`)).toHaveAttribute(
@@ -770,10 +652,10 @@ test.describe("stage spine and keyboard", () => {
     }
   });
 
-  test("plate controls stay inside the left Separation step only", async ({
+  test("plate controls stay inside the left Halftone / CMYK step only", async ({
     page,
   }) => {
-    for (const id of ["artwork", "screen", "output"]) {
+    for (const id of ["artwork", "diffusion", "output"]) {
       await page.getByTestId(`stage-${id}`).click();
       await expect(page.locator(".ink-rail")).toBeHidden();
       await expect(page.getByTestId("active-plate-label")).toBeHidden();
@@ -781,14 +663,12 @@ test.describe("stage spine and keyboard", () => {
 
     await openSeparation(page);
     await expect(
-      page.getByTestId("stage-panel-separation").locator(".ink-rail"),
+      page.getByTestId("stage-panel-halftone-cmyk").locator(".ink-rail"),
     ).toBeVisible();
     await expect(
       page.getByTestId("stage-surface").locator(".ink-rail"),
     ).toHaveCount(0);
-    await expect(page.getByTestId("active-plate-label")).toContainText(
-      "Viewing: Composite",
-    );
+    await expect(page.getByTestId("active-plate-label")).toContainText("ALL");
   });
 
   test("inspector collapse and stage selection both change the workspace", async ({
@@ -801,9 +681,9 @@ test.describe("stage spine and keyboard", () => {
       page.getByRole("button", { name: "Expand panel" }),
     ).toBeVisible();
 
-    await page.getByTestId("stage-screen").click();
+    await page.getByTestId("stage-halftone-cmyk").click();
     await expect(inspector).toHaveAttribute("data-collapsed", "false");
-    await expect(page.getByTestId("stage-panel-screen")).toBeVisible();
+    await expect(page.getByTestId("stage-panel-halftone-cmyk")).toBeVisible();
   });
 
   test("Space activates a focused stage control without arming pan", async ({
@@ -850,7 +730,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("shortcuts do not fire while typing in a field", async ({ page }) => {
-    await page.getByTestId("stage-screen").click();
+    await page.getByTestId("stage-halftone-cmyk").click();
     const field = page.getByTestId("numeric-cellSize");
     await field.click();
     await field.fill("");
@@ -889,7 +769,7 @@ test.describe("stage spine and keyboard", () => {
 
   test("space does not arm panning while typing", async ({ page }) => {
     const stage = page.getByTestId("stage-surface");
-    await page.getByTestId("stage-screen").click();
+    await page.getByTestId("stage-halftone-cmyk").click();
     await page.getByTestId("numeric-cellSize").click();
     await page.keyboard.down("Space");
     await expect(stage).toHaveAttribute("data-pan-armed", "false");
@@ -900,21 +780,21 @@ test.describe("stage spine and keyboard", () => {
 test.describe("press workflow preflight", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
   });
 
   test("screen controls reset together without touching the engine", async ({
     page,
   }) => {
-    await page.getByTestId("stage-screen").click();
-    const screen = page.getByTestId("stage-panel-screen");
+    await page.getByTestId("stage-halftone-cmyk").click();
+    const screen = page.getByTestId("stage-panel-halftone-cmyk");
     await page.getByTestId("numeric-cellSize-slider").fill("24");
-    await screen.locator(".select-field select").selectOption("square");
+    await screen.getByRole("combobox", { name: "Dot shape", exact: true }).selectOption("square");
 
-    await page.getByRole("button", { name: "Reset Screen controls" }).click();
+    await page.getByRole("button", { name: "Reset Halftone / CMYK controls" }).click();
 
     await expect(page.getByTestId("numeric-cellSize")).toHaveValue("12");
-    await expect(screen.locator(".select-field select")).toHaveValue("round");
+    await expect(screen.getByRole("combobox", { name: "Dot shape", exact: true })).toHaveValue("round");
     await expect(page.getByRole("status")).toContainText("Screen controls reset");
   });
 
@@ -965,8 +845,8 @@ test.describe("press workflow preflight", () => {
       .getByTestId("stage-panel-artwork");
     await artwork.getByTestId("artwork-sheet-size").selectOption("15x22");
 
-    await page.getByTestId("stage-screen").click();
-    const screen = page.getByTestId("stage-panel-screen");
+    await page.getByTestId("stage-halftone-cmyk").click();
+    const screen = page.getByTestId("stage-panel-halftone-cmyk");
     const cellSize = screen.getByTestId("numeric-cellSize");
     await cellSize.fill("4");
     await cellSize.press("Enter");
@@ -1007,8 +887,8 @@ test.describe("press workflow preflight", () => {
       .getByTestId("stage-panel-artwork");
     await artwork.getByTestId("artwork-sheet-size").selectOption("8x10");
 
-    await page.getByTestId("stage-screen").click();
-    const screen = page.getByTestId("stage-panel-screen");
+    await page.getByTestId("stage-halftone-cmyk").click();
+    const screen = page.getByTestId("stage-panel-halftone-cmyk");
     const cellSize = screen.getByTestId("numeric-cellSize");
     await cellSize.fill("64");
     await cellSize.press("Enter");

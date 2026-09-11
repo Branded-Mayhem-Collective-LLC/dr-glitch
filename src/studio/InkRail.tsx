@@ -26,16 +26,84 @@ function normalizeAngle(value: number) {
   return ((value % 360) + 360) % 360;
 }
 
-function InlineAngleField({
+function AngleDial({
   plate,
   label,
   value,
+  disabled,
   onChange,
 }: {
   plate: ProcessPlate;
   label: string;
   value: number;
+  disabled: boolean;
   onChange: (plate: ProcessPlate, angle: number) => void;
+}) {
+  const dial = useRef<HTMLButtonElement>(null);
+  const dragging = useRef(false);
+
+  function setFromPointer(clientX: number, clientY: number) {
+    const bounds = dial.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const radians = Math.atan2(
+      clientY - (bounds.top + bounds.height / 2),
+      clientX - (bounds.left + bounds.width / 2),
+    );
+    onChange(plate, normalizeAngle((radians * 180) / Math.PI + 90));
+  }
+
+  return (
+    <button
+      ref={dial}
+      type="button"
+      disabled={disabled}
+      className={`ink-chip-dial ink-chip-dial-${plate}`}
+      role="slider"
+      aria-label={`${label} screen angle dial, ${value} degrees`}
+      aria-valuemin={0}
+      aria-valuemax={359}
+      aria-valuenow={value}
+      title={`Rotate ${label} screen angle`}
+      onPointerDown={(event) => {
+        if (disabled) return;
+        event.preventDefault();
+        dragging.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setFromPointer(event.clientX, event.clientY);
+      }}
+      onPointerMove={(event) => {
+        if (dragging.current) setFromPointer(event.clientX, event.clientY);
+      }}
+      onPointerUp={(event) => {
+        dragging.current = false;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+      onPointerCancel={() => { dragging.current = false; }}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        onChange(plate, normalizeAngle(value + (event.key === "ArrowRight" ? 1 : -1)));
+      }}
+    >
+      <span style={{ transform: `rotate(${value}deg)` }} aria-hidden="true" />
+    </button>
+  );
+}
+
+function InlineAngleField({
+  plate,
+  label,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  plate: ProcessPlate;
+  label: string;
+  value: number;
+  onChange: (plate: ProcessPlate, angle: number) => void;
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(String(value));
   const dragState = useRef<{ startX: number; startValue: number } | null>(null);
@@ -63,6 +131,7 @@ function InlineAngleField({
   }
 
   function onPointerDown(event: PointerEvent<HTMLSpanElement>) {
+    if (disabled) return;
     dragState.current = { startX: event.clientX, startValue: value };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -94,6 +163,7 @@ function InlineAngleField({
         ↔
       </span>
       <input
+        disabled={disabled}
         className="ink-chip-angle-input"
         data-testid={`ink-angle-${plate}`}
         type="text"
@@ -170,23 +240,24 @@ export default function InkRail({
         data-testid="ink-chip-composite"
         className={`ink-chip ink-chip-composite ${activePlate === "composite" ? "is-active" : ""}`}
         aria-pressed={activePlate === "composite"}
-        aria-label="Composite, all four plates together"
-        title="Composite — all plates together"
+        aria-label={settings.grayscale ? "Grayscale proof, black plate" : "Composite, all four plates together"}
+        title={settings.grayscale ? "Grayscale proof — K only" : "Composite — all plates together"}
         onClick={() => onSolo("composite")}
       >
         <span
           className="ink-chip-swatch ink-chip-swatch-composite"
           aria-hidden="true"
         >
-          <span style={{ background: CHROME_INK.cyan }} />
-          <span style={{ background: CHROME_INK.magenta }} />
-          <span style={{ background: CHROME_INK.yellow }} />
+          <span style={{ background: settings.grayscale ? CHROME_INK.black : CHROME_INK.cyan }} />
+          <span style={{ background: settings.grayscale ? CHROME_INK.black : CHROME_INK.magenta }} />
+          <span style={{ background: settings.grayscale ? CHROME_INK.black : CHROME_INK.yellow }} />
           <span style={{ background: CHROME_INK.black }} />
         </span>
-        <span className="ink-chip-letter">ALL</span>
+        <span className="ink-chip-letter">{settings.grayscale ? "GRAY" : "ALL"}</span>
       </button>
 
       {PLATES.map((plate) => {
+        const disabled = Boolean(settings.grayscale && plate !== "black");
         const visible = settings.visible[plate];
         const isHiddenAndActive = activePlate === plate && !visible;
         const meta = PLATE_META[plate];
@@ -197,8 +268,16 @@ export default function InkRail({
           visible ? "visible" : "hidden"
         }. Enter to solo. Alt+Enter to ${visible ? "hide" : "show"}.`;
         return (
-          <div className="ink-chip-row" key={plate}>
+          <div className="ink-chip-row" key={plate} data-disabled={disabled || undefined}>
+            <AngleDial
+              plate={plate}
+              label={meta.label}
+              value={angle}
+              disabled={disabled}
+              onChange={onAngleChange}
+            />
             <button
+              disabled={disabled}
               type="button"
               data-testid={`ink-chip-${plate}`}
               className={`ink-chip ${activePlate === plate ? "is-active" : ""}`}
@@ -229,6 +308,7 @@ export default function InkRail({
               <span className="sr-only">{angle} degrees</span>
             </button>
             <InlineAngleField
+              disabled={disabled}
               plate={plate}
               label={meta.label}
               value={angle}

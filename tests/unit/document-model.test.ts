@@ -54,13 +54,11 @@ describe("Dave-parity artwork placement", () => {
         sheetWidth: 2400,
         sheetHeight: 3000,
         scalePercent: 100,
-        offsetX: 0,
-        offsetY: 0,
       }),
     ).toEqual({ x: 700, y: 1250, width: 1000, height: 500 });
   });
 
-  it("scales source pixels before centering and applies offsets afterward", () => {
+  it("scales source pixels before centering", () => {
     expect(
       calculateArtworkPlacement({
         sourceWidth: 1000,
@@ -68,10 +66,8 @@ describe("Dave-parity artwork placement", () => {
         sheetWidth: 2400,
         sheetHeight: 3000,
         scalePercent: 50,
-        offsetX: 100,
-        offsetY: -75,
       }),
-    ).toEqual({ x: 1050, y: 1300, width: 500, height: 250 });
+    ).toEqual({ x: 950, y: 1375, width: 500, height: 250 });
   });
 
   it("uses integer source dimensions and integer centering like the desktop tool", () => {
@@ -82,8 +78,6 @@ describe("Dave-parity artwork placement", () => {
         sheetWidth: 401,
         sheetHeight: 301,
         scalePercent: 50,
-        offsetX: 0,
-        offsetY: 0,
       }),
     ).toEqual({ x: 175, y: 138, width: 50, height: 25 });
   });

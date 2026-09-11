@@ -277,7 +277,7 @@ async function auditStylesheetSource(
 test.describe("DR.GLITCH design system", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
   });
 
   test("no element uses a banned hue", async ({ page }) => {
@@ -322,7 +322,7 @@ test.describe("DR.GLITCH design system", () => {
     const offenders: string[] = [];
     for (const route of ["/", "/landing", "/login", "/signup"]) {
       await page.goto(route);
-      if (route === "/") await page.waitForSelector("canvas");
+      if (route === "/") await page.waitForSelector('[data-testid="artwork-canvas"]');
       const routeOffenders = await auditComputedPaint(page);
       offenders.push(...routeOffenders.map((entry) => `${route} ${entry}`));
     }
@@ -582,7 +582,7 @@ test.describe("accessibility floor and mobile", () => {
 
   test("yellow never carries text", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     const violations = await page.evaluate(() => {
       const out: string[] = [];
       for (const el of Array.from(document.querySelectorAll("*"))) {
@@ -607,7 +607,7 @@ test.describe("accessibility floor and mobile", () => {
     // who asked it not to. This test pins that cascade.
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
-    await page.waitForSelector("canvas");
+    await page.waitForSelector('[data-testid="artwork-canvas"]');
     const state = await page.evaluate(() => {
       const el = document.querySelector(
         ".brand-lockup strong",
@@ -633,7 +633,7 @@ test.describe("accessibility floor and mobile", () => {
       page,
     }) => {
       await page.goto(route);
-      if (route === "/") await page.waitForSelector("canvas");
+      if (route === "/") await page.waitForSelector('[data-testid="artwork-canvas"]');
 
       const controls = page.locator(
         "button, input:not([type='hidden']), select, textarea, a[href], " +

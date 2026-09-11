@@ -36,7 +36,6 @@ export default function StageSpine({ stages, active, onJump }: Props) {
           title={`Open ${stage.label} controls`}
           onClick={() => onJump(stage.id)}
         >
-          <span className="stage-number">{stage.number}</span>
           <span className="stage-label">{stage.label}</span>
           {stage.complete ? (
             <span className="stage-mark" aria-label="complete">

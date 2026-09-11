@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "DR.GLITCH: Start local studio",
+      "type": "shell",
+      "command": "npm",
+      "windows": { "command": "npm.cmd" },
+      "args": ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5173", "--strictPort"],
+      "isBackground": true,
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^(.*):(\\d+):(\\d+): (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 },
+        "background": { "activeOnStart": true, "beginsPattern": "VITE", "endsPattern": "Local:.*5173" }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "DR.GLITCH: Unit tests",
+      "type": "npm", "script": "test", "problemMatcher": []
+    },
+    {
+      "label": "DR.GLITCH: Browser tests",
+      "type": "npm", "script": "test:e2e", "problemMatcher": []
+    },
+    {
+      "label": "DR.GLITCH: Lint",
+      "type": "npm", "script": "lint", "problemMatcher": []
+    },
+    {
+      "label": "DR.GLITCH: Build",
+      "type": "npm", "script": "build", "problemMatcher": "$tsc"
+    },
+    {
+      "label": "DR.GLITCH: All checks",
+      "dependsOrder": "sequence",
+      "dependsOn": ["DR.GLITCH: Unit tests", "DR.GLITCH: Browser tests", "DR.GLITCH: Lint", "DR.GLITCH: Build"],
+      "problemMatcher": []
+    }
+  ]
+}

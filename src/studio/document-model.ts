@@ -24,8 +24,7 @@ export type DocumentSettings = {
   sheetSize: SheetSizeId;
   orientation: Orientation;
   scalePercent: number;
-  offsetX: number;
-  offsetY: number;
+  background: "white" | "black";
   mirrorImage: boolean;
   mirrorDirection: MirrorDirection;
 };
@@ -34,8 +33,7 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentSettings = {
   sheetSize: "11x15",
   orientation: "portrait",
   scalePercent: 100,
-  offsetX: 0,
-  offsetY: 0,
+  background: "white",
   mirrorImage: false,
   mirrorDirection: "horizontal",
 };
@@ -61,8 +59,6 @@ type ArtworkPlacementInput = {
   sheetWidth: number;
   sheetHeight: number;
   scalePercent: number;
-  offsetX: number;
-  offsetY: number;
 };
 
 export function calculateArtworkPlacement({
@@ -71,16 +67,14 @@ export function calculateArtworkPlacement({
   sheetWidth,
   sheetHeight,
   scalePercent,
-  offsetX,
-  offsetY,
 }: ArtworkPlacementInput) {
   const scale = scalePercent / 100;
   const width = Math.max(1, Math.trunc(sourceWidth * scale));
   const height = Math.max(1, Math.trunc(sourceHeight * scale));
 
   return {
-    x: Math.floor((sheetWidth - width) / 2) + offsetX,
-    y: Math.floor((sheetHeight - height) / 2) + offsetY,
+    x: Math.floor((sheetWidth - width) / 2),
+    y: Math.floor((sheetHeight - height) / 2),
     width,
     height,
   };

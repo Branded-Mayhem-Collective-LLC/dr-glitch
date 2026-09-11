@@ -107,7 +107,7 @@ test("session badge remains registered, unshadowed, and inside the studio token 
   page,
 }) => {
   await page.goto("/");
-  await page.waitForSelector("canvas");
+  await page.waitForSelector('[data-testid="artwork-canvas"]');
 
   const badge = page.getByTestId("session-badge");
   await expect(badge).toBeVisible();
@@ -127,8 +127,8 @@ test("session badge focus follows the selected plate ink with a black inner rule
   page,
 }) => {
   await page.goto("/");
-  await page.waitForSelector("canvas");
-  await page.getByTestId("stage-separation").click();
+  await page.waitForSelector('[data-testid="artwork-canvas"]');
+  await page.getByTestId("stage-halftone-cmyk").click();
 
   const action = page.getByTestId("session-badge-action");
   for (const [plate, color] of [
