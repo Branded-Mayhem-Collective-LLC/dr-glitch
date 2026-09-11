@@ -56,6 +56,7 @@ import {
   type SheetSizeId,
 } from "./document-model";
 import { withPngDpi } from "./png-dpi";
+import { validateImageDimensions, validateImageFile, validateImageSignature } from "./image-file";
 import {
   ChangeEvent,
   CSSProperties,
@@ -68,49 +69,7 @@ import {
   useState,
 } from "react";
 
-const DEFAULT_SETTINGS: HalftoneSettings = {
-  cellSize: 12,
-  frayedXEdge: 0,
-  frayedYEdge: 0,
-  opacity: 1,
-  dotShape: "round",
-  invert: false,
-  grayscale: false,
-  strokeWidth: 1,
-  angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 },
-  visible: { cyan: true, magenta: true, yellow: true, black: true },
-  diffusionEnabled: false,
-  diffusionAlgorithm: "floyd-steinberg",
-  diffusionModulation: "none",
-  diffusionModStrength: 0.5,
-  diffusionIntensity: 0.5,
-  diffusionLevels: 8,
-  diffusionSharpenStrength: 0,
-  diffusionSharpenRadius: 1,
-  diffusionDenoise: 0,
-  brokenKernel: 0,
-  directionalBias: 0,
-  directionalBiasAngle: 0,
-  errorOverflow: 0,
-  diffusionReset: 0,
-  crossChannelBleed: 0,
-  sliceShift: 0,
-  sliceSize: 20,
-  verticalSliceShift: 0,
-  verticalSliceSize: 20,
-  gridWarp: 0,
-  warpScale: 100,
-  smearDrag: 0,
-  smearLength: 24,
-  smearVertical: false,
-  macroblockCorrupt: 0,
-  macroblockDropout: 0.25,
-  blockShift: 0,
-  blockShiftSize: 16,
-  channelDesync: 0,
-  bitmapSort: 0,
-  bitmapSortVertical: false,
-};
+import { DEFAULT_SETTINGS, DIFFUSION_DEFAULTS, GLITCH_DEFAULTS } from "./settings-defaults";
 
 const CMYK_PRESETS = [
   { id: "preset-1", label: "Preset 1 · C15 M75 Y0 K45", angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 } },
@@ -155,6 +114,10 @@ const STAGE_DEFINITIONS = [
 type StudioStageId = (typeof STAGE_DEFINITIONS)[number]["id"];
 
 export default function HalftoneStudio() {
+  const artworkLoadRef = useRef(0);
+  const artworkUrlRef = useRef<string | undefined>(undefined);
+  const artworkImageRef = useRef<HTMLImageElement | undefined>(undefined);
+  const registrationLoadRef = useRef(0);
   const [source, setSource] = useState<HTMLImageElement | HTMLCanvasElement | null>(
     null,
   );
@@ -178,6 +141,16 @@ export default function HalftoneStudio() {
   const [registrationWeight, setRegistrationWeight] = useState(2);
   const [registrationShape, setRegistrationShape] = useState<CustomShapeAsset>();
   const [registrationMode, setRegistrationMode] = useState<"corners" | "centered">("corners");
+
+  useEffect(() => () => {
+    artworkLoadRef.current++;
+    registrationLoadRef.current++;
+    if (artworkImageRef.current) {
+      artworkImageRef.current.onload = artworkImageRef.current.onerror = null;
+      artworkImageRef.current.src = "";
+    }
+    if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
+  }, []);
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -463,6 +436,7 @@ export default function HalftoneStudio() {
   }
 
   function resetOutput() {
+    registrationLoadRef.current++;
     setSettings((current) => ({
       ...current,
       opacity: 1,
@@ -478,6 +452,7 @@ export default function HalftoneStudio() {
   }
 
   function setRegistrationEnabled(enabled: boolean) {
+    registrationLoadRef.current++;
     setRegistration(enabled);
     setRegistrationSize(120);
     setRegistrationOffset(120);
@@ -489,21 +464,7 @@ export default function HalftoneStudio() {
   function resetDiffusion() {
     setSettings((current) => ({
       ...current,
-      diffusionEnabled: DEFAULT_SETTINGS.diffusionEnabled,
-      diffusionAlgorithm: DEFAULT_SETTINGS.diffusionAlgorithm,
-      diffusionModulation: DEFAULT_SETTINGS.diffusionModulation,
-      diffusionModStrength: DEFAULT_SETTINGS.diffusionModStrength,
-      diffusionIntensity: DEFAULT_SETTINGS.diffusionIntensity,
-      diffusionLevels: DEFAULT_SETTINGS.diffusionLevels,
-      diffusionSharpenStrength: DEFAULT_SETTINGS.diffusionSharpenStrength,
-      diffusionSharpenRadius: DEFAULT_SETTINGS.diffusionSharpenRadius,
-      diffusionDenoise: DEFAULT_SETTINGS.diffusionDenoise,
-      brokenKernel: DEFAULT_SETTINGS.brokenKernel,
-      directionalBias: DEFAULT_SETTINGS.directionalBias,
-      directionalBiasAngle: DEFAULT_SETTINGS.directionalBiasAngle,
-      errorOverflow: DEFAULT_SETTINGS.errorOverflow,
-      diffusionReset: DEFAULT_SETTINGS.diffusionReset,
-      crossChannelBleed: DEFAULT_SETTINGS.crossChannelBleed,
+      ...DIFFUSION_DEFAULTS,
     }));
     setNotice("Diffusion controls reset");
   }
@@ -511,11 +472,7 @@ export default function HalftoneStudio() {
   function resetGlitch() {
     setSettings((current) => ({
       ...current,
-      sliceShift: 0, sliceSize: 20,
-      verticalSliceShift: 0, verticalSliceSize: 20,
-      gridWarp: 0, warpScale: 100, smearDrag: 0, smearLength: 24, smearVertical: false,
-      macroblockCorrupt: 0, macroblockDropout: 0.25, blockShift: 0, blockShiftSize: 16,
-      channelDesync: 0, bitmapSort: 0, bitmapSortVertical: false,
+      ...GLITCH_DEFAULTS,
     }));
     setNotice("Glitch controls reset");
   }
@@ -582,14 +539,37 @@ export default function HalftoneStudio() {
     }
   }
 
-  function loadFile(file: File) {
-    if (!file.type.startsWith("image/")) {
-      setNotice("Choose a PNG, JPG, or WebP image.");
+  async function loadFile(file: File) {
+    const request = ++artworkLoadRef.current;
+    if (artworkImageRef.current) {
+      artworkImageRef.current.onload = artworkImageRef.current.onerror = null;
+      artworkImageRef.current.src = "";
+      artworkImageRef.current = undefined;
+    }
+    if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
+    artworkUrlRef.current = undefined;
+    const fileError = validateImageFile(file);
+    if (fileError) {
+      setNotice(fileError);
       return;
     }
+    const signatureError = await validateImageSignature(file);
+    if (request !== artworkLoadRef.current) return;
+    if (signatureError) { setNotice(signatureError); return; }
     const url = URL.createObjectURL(file);
+    artworkUrlRef.current = url;
     const image = new Image();
+    artworkImageRef.current = image;
     image.onload = () => {
+      if (artworkImageRef.current === image) artworkImageRef.current = undefined;
+      URL.revokeObjectURL(url);
+      if (artworkUrlRef.current === url) artworkUrlRef.current = undefined;
+      if (request !== artworkLoadRef.current) return;
+      const dimensionError = validateImageDimensions(image.naturalWidth, image.naturalHeight);
+      if (dimensionError) {
+        setNotice(dimensionError);
+        return;
+      }
       setSource(image);
       setSourceName(file.name);
       setActivePlate("composite");
@@ -604,18 +584,19 @@ export default function HalftoneStudio() {
               : current.orientation,
       }));
       setNotice("Artwork loaded");
-      URL.revokeObjectURL(url);
     };
     image.onerror = () => {
-      setNotice("That image could not be opened.");
+      if (artworkImageRef.current === image) artworkImageRef.current = undefined;
       URL.revokeObjectURL(url);
+      if (artworkUrlRef.current === url) artworkUrlRef.current = undefined;
+      if (request === artworkLoadRef.current) setNotice("That image could not be opened.");
     };
     image.src = url;
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) loadFile(file);
+    if (file) void loadFile(file);
     event.target.value = "";
   }
 
@@ -623,12 +604,15 @@ export default function HalftoneStudio() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    const request = ++registrationLoadRef.current;
     try {
       const shape = await importCustomShape(file);
+      if (request !== registrationLoadRef.current) return;
       setRegistrationShape(shape);
       setRegistration(true);
       setNotice(`Registration mark loaded: ${shape.filename}`);
     } catch (error) {
+      if (request !== registrationLoadRef.current) return;
       setNotice(error instanceof Error ? error.message : "That registration SVG could not be imported.");
     }
   }
@@ -637,7 +621,7 @@ export default function HalftoneStudio() {
     event.preventDefault();
     setDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) loadFile(file);
+    if (file) void loadFile(file);
   }
 
   async function exportArtwork(kind: "png" | "svg" | "jpg" | "tiff" | "plates") {
@@ -660,6 +644,7 @@ export default function HalftoneStudio() {
     try {
       const { width, height } = outputDimensions;
       if (settings.dotShape === "custom" && settings.customShape) await prepareCustomShape(settings.customShape);
+      if (registrationShape) await prepareCustomShape(registrationShape);
 
       if (kind !== "plates") {
         if (kind === "svg") {
@@ -671,6 +656,8 @@ export default function HalftoneStudio() {
               width,
               height,
               document: documentSettings,
+              registration, registrationSize, registrationOffset, registrationWeight,
+              registrationShape, registrationMode,
             });
             svgZip.file(`${folder}/${settings.grayscale ? "K" : PLATE_META[plate].short}.svg`, svg);
           }
@@ -679,6 +666,9 @@ export default function HalftoneStudio() {
             document: documentSettings,
             settings,
             plates: applicablePlates,
+            registration, registrationSize, registrationOffset, registrationWeight,
+            registrationShape, registrationMode,
+            output: { width, height, dpi: DOCUMENT_DPI },
             fill: "#000000",
             vector: true,
           }, null, 2));

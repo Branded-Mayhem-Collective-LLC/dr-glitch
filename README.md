@@ -24,10 +24,9 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 - Converts RGB samples to cyan, magenta, yellow, and black coverage in the browser.
 - Renders a live four-color composite proof or an individual monochrome plate.
-- Offers round, square, diamond, and line dot shapes.
+- Offers round, square, diamond, line, triangle, cross, circle-outline, and imported custom SVG dots.
 - Adjusts cell size from 3 to 64 pixels, with a 240-DPI LPI reference.
-- Adjusts contrast from 0.5× to 2× and exposure from -30% to +30%.
-- Adjusts composite ink density from 35% to 100%.
+- Supports diffusion algorithms and source-field glitch controls.
 - Supports standard-positive and inverted-dot output.
 - Uses independently editable, normalized 0–359° screen angles for C, M, Y, and K; defaults are 15°, 75°, 0°, and 45°.
 - Lets each process plate be shown or hidden independently.
@@ -37,7 +36,7 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 ### Separation workflow
 
-- Organizes the job into Artwork, Screen, Separation, and Output stages.
+- Organizes the job into Artboard, Halftone / CMYK, Diffusion, Glitch, and Output / Registration stages.
 - Keeps the live proof visible while stage-specific controls remain in a collapsible inspector.
 - Provides a single ink rail for composite/C/M/Y/K selection, angle editing, and visibility.
 - Solos plates by click, keyboard, or numbered shortcut.
@@ -61,7 +60,7 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 ### Export
 
-- Exports a composite proof as a PNG with embedded 240-DPI metadata.
+- Exports composite PNG (with 240-DPI metadata), JPEG, and TIFF proofs, plus vector SVG plate ZIPs.
 - Exports a ZIP containing four monochrome C/M/Y/K PNG plates, each with embedded 240-DPI metadata.
 - Includes `job-settings.json` in every plate ZIP with the source name, document geometry, separation settings, registration state, output dimensions, DPI, and screen-load estimate.
 - Uses deterministic, source-based filenames for proof and plate packages.
@@ -75,7 +74,7 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 - Stores authentication records in Cloudflare D1 through Drizzle.
 - Creates the authentication instance per request to avoid D1 lock contention.
 - Exposes a Worker health endpoint at `/api/health`.
-- Declares D1, R2, static-asset, and authentication-secret bindings for hosted deployment.
+- Uses D1 and static-asset bindings with a separately configured authentication secret and canonical origin.
 
 Saved cloud projects and cross-device project persistence are **not implemented in `0.1.0`**. The studio currently identifies work as a local session; account infrastructure is in place for a later hosted-workspace release.
 
@@ -109,7 +108,7 @@ Saved cloud projects and cross-device project persistence are **not implemented 
 - React 19, React Router, TypeScript, and Vite
 - Hono on Cloudflare Workers
 - Better Auth with `better-auth-cloudflare`
-- Cloudflare D1, R2, and static assets
+- Cloudflare D1 and static assets
 - Drizzle ORM
 - Canvas 2D rendering and JSZip
 - Vitest and Playwright
@@ -126,36 +125,44 @@ The Screen stage now includes Triangle, Cross, Circle outline, outline stroke
 exports one K plate plus settings. CMY controls become available again when
 returning to CMYK. Reset Screen restores CMYK, Round, and a 1 px outline.
 
-Requirements: Node.js `>=22.13.0`.
+Requirements: Node.js `>=22.14.0` and npm `>=11.11.0` (lockfile generated with npm 11.11.0).
 
 ```bash
 npm ci
-npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+npm run dev -- --host 127.0.0.1 --port 4343 --strictPort
 ```
 
 Useful checks:
 
 ```bash
 npm test
+npm run test:worker
 npx playwright install chromium
 npm run test:e2e
 npm run lint
 npm run build
 ```
 
-Open `http://127.0.0.1:5173` in a desktop browser. Use the sample immediately
-or upload a PNG/JPEG/WebP; no account is required. Open **Screen** for the new
-controls, **Separation** for the K angle, and **Export** for PNG/plate ZIPs.
+Open `http://127.0.0.1:4343` in a desktop browser. Use the sample immediately
+or upload a PNG/JPEG/WebP; no account is required. Open **Halftone / CMYK** for dot
+and angle controls, and **Export** for proof and plate packages.
 
 In VS Code, choose **Terminal → Run Task → DR.GLITCH: Start local studio**.
 Keep that terminal running while testing. Stop it with Ctrl+C or Terminate
 Task, then run the same task to restart. **DR.GLITCH: All checks** runs unit
-tests, browser tests, lint, and build. Install Chromium once using the command
-above. If port 5173 is already occupied, use the running studio or stop its
-existing development task before starting another.
+tests, Worker auth tests, browser tests, lint, and build. Install Chromium once using the command
+above. If port 4343 is occupied, identify its owner before starting; never stop an
+unrelated listener or silently switch the registered preview port.
 
-The hosted authentication paths require the D1 and Better Auth bindings declared in `wrangler.toml`. The separation studio itself remains usable as a guest without those hosted bindings.
+The hosted authentication paths require the D1 and Better Auth configuration in
+`wrangler.toml`. For local accounts, create an ignored `.dev.vars` from
+`.dev.vars.example`, supply a random local secret, and apply local migrations.
+See [deployment and verification](docs/deployment.md) for exact commands, the
+managed-host preview/tunnel route, and production release ordering. The studio
+remains usable as a guest when auth is not configured.
 
 ## License
 
-MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+See [LICENSE](LICENSE) for the repository license and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party notices.
+This release does not change either file or grant new licensing rights.

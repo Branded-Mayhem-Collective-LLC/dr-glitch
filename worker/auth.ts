@@ -1,16 +1,21 @@
-import type { D1Database, IncomingRequestCfProperties, R2Bucket } from "@cloudflare/workers-types";
+import type { D1Database, IncomingRequestCfProperties } from "@cloudflare/workers-types";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
 import { withCloudflare } from "better-auth-cloudflare";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 
-export type Bindings = {
-  ASSETS: Fetcher;
-  DATABASE: D1Database;
-  BUCKET: R2Bucket;
-  BETTER_AUTH_SECRET: string;
-};
+export type Bindings = Env & { BETTER_AUTH_SECRET?: string };
+
+export function authOrigin(value: string): string {
+  const url = new URL(value);
+  const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !(local && url.protocol === "http:")) ||
+      url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("BETTER_AUTH_URL must be an HTTPS origin (HTTP loopback is allowed locally).");
+  }
+  return url.origin;
+}
 
 /**
  * Create a Better Auth instance.
@@ -22,22 +27,28 @@ export type Bindings = {
 export function createAuth(
   env?: Bindings,
   cf?: IncomingRequestCfProperties,
-  baseURL?: string,
 ) {
   const db = env ? drizzle(env.DATABASE, { schema }) : ({} as never);
+  const baseURL = env ? authOrigin(env.BETTER_AUTH_URL) : undefined;
 
   return betterAuth({
     baseURL,
+    trustedOrigins: baseURL ? [baseURL] : [],
     secret: env?.BETTER_AUTH_SECRET,
     ...withCloudflare(
       {
-        autoDetectIpAddress: true,
+        autoDetectIpAddress: false,
         geolocationTracking: false,
         cf: cf ?? {},
         d1: env ? { db, options: { usePlural: true } } : undefined,
       },
       {
         emailAndPassword: { enabled: true },
+        advanced: {
+          disableOriginCheck: false,
+          disableCSRFCheck: false,
+          ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+        },
         user: {
           additionalFields: {
             signupSource: { type: "string", required: false },
@@ -47,6 +58,7 @@ export function createAuth(
           enabled: true,
           window: 60,
           max: 100,
+          storage: "database",
         },
       },
     ),

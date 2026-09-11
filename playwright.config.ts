@@ -6,12 +6,12 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: "http://127.0.0.1:4343",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 5173 --strictPort",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: !process.env.CI,
+    command: "npm run dev -- --host 127.0.0.1 --port 4343 --strictPort",
+    url: "http://127.0.0.1:4343",
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 });

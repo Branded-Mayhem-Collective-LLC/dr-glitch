@@ -1,11 +1,14 @@
 import type { CustomShapeAsset } from "./custom-shape-data";
 
 type Bounds = { x: number; y: number; width: number; height: number };
-type Prepared = { svg: string; image: HTMLImageElement; stamps: Map<string, HTMLCanvasElement> };
-// Active settings retain their assets; abandoned candidates can be collected.
-const prepared = new WeakMap<CustomShapeAsset, Prepared>();
-const preparing = new WeakMap<CustomShapeAsset, Promise<void>>();
+type Prepared = { image: HTMLImageElement; stamps: Map<string, HTMLCanvasElement> };
+const prepared = new Map<string, Prepared>();
+const preparing = new Map<string, Promise<void>>();
 const ANALYSIS_SIZE = 2048;
+
+function assetKey(asset: CustomShapeAsset) {
+  return `${asset.filename}\n${asset.svg}`;
+}
 
 function withBounds(svg: string, bounds: Bounds) {
   return svg.replace(/viewBox="[^"]*"/, `viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}"`);
@@ -96,27 +99,19 @@ export async function importCustomShape(file: File): Promise<CustomShapeAsset> {
 
 /** Call before rendering imported settings; keeps the hot dot loop synchronous. */
 export async function prepareCustomShape(asset: CustomShapeAsset): Promise<void> {
-  if (prepared.has(asset)) return;
-  const pending = preparing.get(asset);
+  const key = assetKey(asset);
+  if (prepared.has(key)) return;
+  const pending = preparing.get(key);
   if (pending) return pending;
-  const promise = import("./custom-shape-data").then(async ({ sanitizeSvg }) => {
-    const svg = sanitizeSvg(asset.svg);
-    const image = await loadSvg(svg);
-    prepared.set(asset, { svg, image, stamps: new Map() });
+  const promise = import("./custom-shape-data").then(({ sanitizeSvg }) => loadSvg(sanitizeSvg(asset.svg))).then((image) => {
+    prepared.set(key, { image, stamps: new Map() });
   });
-  preparing.set(asset, promise);
-  try { await promise; } finally { preparing.delete(asset); }
-}
-
-/** The same sanitized asset used by raster stamps, without loading XML in the initial bundle. */
-export function preparedCustomShapeSvg(asset: CustomShapeAsset): string {
-  const ready = prepared.get(asset);
-  if (!ready) throw new Error("The custom SVG is not ready to render.");
-  return ready.svg;
+  preparing.set(key, promise);
+  try { await promise; } finally { preparing.delete(key); }
 }
 
 export function customShapeStamp(asset: CustomShapeAsset, color: string, maximumDotSize: number): HTMLCanvasElement {
-  const ready = prepared.get(asset);
+  const ready = prepared.get(assetKey(asset));
   if (!ready) throw new Error("The custom SVG is not ready to render.");
   // Two samples per output pixel, bounded by the renderer's supported cell sizes.
   const resolution = Math.min(2048, Math.max(16, Math.ceil(maximumDotSize * 2)));

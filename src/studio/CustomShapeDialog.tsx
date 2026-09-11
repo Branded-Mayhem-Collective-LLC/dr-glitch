@@ -21,10 +21,11 @@ export default function CustomShapeDialog({ current, onApply, onCancel }: Props)
 
   useEffect(() => {
     const element = dialog.current!;
+    const requestRef = request;
     const previousFocus = document.activeElement as HTMLElement | null;
     element.showModal();
     return () => {
-      request.current++;
+      requestRef.current++;
       element.close();
       previousFocus?.focus();
     };

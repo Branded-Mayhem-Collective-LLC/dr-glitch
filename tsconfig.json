@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "vite/client"]
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "vite/client"]
   },
   "include": ["src", "worker", "db", "tests", "*.ts"]
 }

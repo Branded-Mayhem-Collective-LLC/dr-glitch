@@ -8,6 +8,13 @@
       "when": 1785168827082,
       "tag": "0000_glamorous_stark_industries",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789146186118,
+      "tag": "0001_crazy_night_thrasher",
+      "breakpoints": true
     }
   ]
 }

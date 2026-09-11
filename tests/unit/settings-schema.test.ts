@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSettings } from "../../src/studio/settings-schema";
+import { DEFAULT_SETTINGS, DIFFUSION_DEFAULTS, GLITCH_DEFAULTS } from "../../src/studio/settings-defaults";
 
 const valid = {
   cellSize: 12,
@@ -15,6 +16,26 @@ const valid = {
 };
 
 describe("parseSettings", () => {
+  it("round-trips shared defaults without changing values", () => {
+    expect(parseSettings(DEFAULT_SETTINGS)).toEqual({ ok: true, value: DEFAULT_SETTINGS });
+  });
+
+  it("retains sparse groups and fills only their shared defaults", () => {
+    const result = parseSettings({ ...valid, diffusionIntensity: 0.8, smearVertical: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatchObject({
+      ...DIFFUSION_DEFAULTS, ...GLITCH_DEFAULTS, diffusionIntensity: 0.8, smearVertical: true,
+    });
+    const legacy = parseSettings(valid);
+    if (legacy.ok) {
+      expect(legacy.value).not.toHaveProperty("diffusionIntensity");
+      expect(legacy.value).not.toHaveProperty("sliceShift");
+    }
+  });
+
+  it.each([["floyd-steinberg"], { toString: () => "floyd-steinberg" }])("does not coerce algorithm objects", (diffusionAlgorithm) => {
+    expect(parseSettings({ ...valid, diffusionAlgorithm })).toEqual({ ok: false, field: "diffusionAlgorithm" });
+  });
   it("accepts a valid settings object", () => {
     const result = parseSettings(valid);
     expect(result.ok).toBe(true);
@@ -54,5 +75,9 @@ describe("parseSettings", () => {
     const result = parseSettings({ ...valid, angles: { ...valid.angles, cyan: 375 } });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.angles.cyan).toBe(15);
+  });
+
+  it.each(["smearVertical", "bitmapSortVertical"])("rejects a non-boolean %s", (field) => {
+    expect(parseSettings({ ...valid, sliceShift: 1, [field]: "false" })).toEqual({ ok: false, field });
   });
 });

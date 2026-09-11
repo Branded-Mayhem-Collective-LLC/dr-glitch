@@ -61,7 +61,7 @@ function AngleDial({
       role="slider"
       aria-label={`${label} screen angle dial, ${value} degrees`}
       aria-valuemin={0}
-      aria-valuemax={359}
+      aria-valuemax={360}
       aria-valuenow={value}
       title={`Rotate ${label} screen angle`}
       onPointerDown={(event) => {
@@ -82,9 +82,11 @@ function AngleDial({
       }}
       onPointerCancel={() => { dragging.current = false; }}
       onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        onChange(plate, normalizeAngle(value + (event.key === "ArrowRight" ? 1 : -1)));
+        const next = event.key === "Home" ? 0 : event.key === "End" ? 359
+          : normalizeAngle(value + (event.key === "ArrowRight" || event.key === "ArrowUp" ? 1 : -1));
+        onChange(plate, next);
       }}
     >
       <span style={{ transform: `rotate(${value}deg)` }} aria-hidden="true" />

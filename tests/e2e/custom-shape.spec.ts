@@ -155,7 +155,10 @@ test("custom assets round-trip through CMYK and grayscale plate exports and the 
       await actual.decode();
       const canvas = document.createElement("canvas");
       renderHalftone(createDemoArtwork(), canvas, parsed.value, { plate: "black", width: job.output.width, height: job.output.height,
-        registration: job.registration, paper: "#ffffff", monochromePlate: true, document: job.document });
+        registration: job.registration, registrationSize: job.registrationSize,
+        registrationOffset: job.registrationOffset, registrationWeight: job.registrationWeight,
+        registrationShape: job.registrationShape, registrationMode: job.registrationMode,
+        paper: job.document.background === "black" ? "#000000" : "#ffffff", monochromePlate: true, document: job.document });
       const context = canvas.getContext("2d")!;
       const expectedPixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
       context.drawImage(actual, 0, 0);

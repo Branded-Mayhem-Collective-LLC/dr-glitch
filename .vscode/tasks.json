@@ -6,19 +6,23 @@
       "type": "shell",
       "command": "npm",
       "windows": { "command": "npm.cmd" },
-      "args": ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5173", "--strictPort"],
+      "args": ["run", "dev", "--", "--host", "127.0.0.1", "--port", "4343", "--strictPort"],
       "isBackground": true,
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": {
         "owner": "vite",
         "pattern": { "regexp": "^(.*):(\\d+):(\\d+): (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 },
-        "background": { "activeOnStart": true, "beginsPattern": "VITE", "endsPattern": "Local:.*5173" }
+        "background": { "activeOnStart": true, "beginsPattern": "VITE", "endsPattern": "Local:.*4343" }
       },
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
       "label": "DR.GLITCH: Unit tests",
       "type": "npm", "script": "test", "problemMatcher": []
+    },
+    {
+      "label": "DR.GLITCH: Worker tests",
+      "type": "npm", "script": "test:worker", "problemMatcher": []
     },
     {
       "label": "DR.GLITCH: Browser tests",
@@ -35,7 +39,7 @@
     {
       "label": "DR.GLITCH: All checks",
       "dependsOrder": "sequence",
-      "dependsOn": ["DR.GLITCH: Unit tests", "DR.GLITCH: Browser tests", "DR.GLITCH: Lint", "DR.GLITCH: Build"],
+      "dependsOn": ["DR.GLITCH: Unit tests", "DR.GLITCH: Worker tests", "DR.GLITCH: Browser tests", "DR.GLITCH: Lint", "DR.GLITCH: Build"],
       "problemMatcher": []
     }
   ]
