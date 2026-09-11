@@ -4,7 +4,7 @@ import {
   getSheetPixelDimensions,
   type DocumentSettings,
 } from "./document-model";
-import { customShapeStamp, preparedCustomShapeSvg } from "./custom-shape";
+import { customShapeStamp } from "./custom-shape";
 import type { CustomShapeAsset } from "./custom-shape-data";
 
 export type Plate = "composite" | "cyan" | "magenta" | "yellow" | "black";
@@ -127,6 +127,17 @@ function glitchSamplePoint(x: number, y: number, width: number, height: number, 
   }
   if ((settings.channelDesync ?? 0) > 0) sampleX += settings.channelDesync! * Math.max(8, (settings.blockShiftSize ?? 16) * 2);
   return { x: Math.max(0, Math.min(width - 1, Math.round(sampleX))), y: Math.max(0, Math.min(height - 1, Math.round(sampleY))) };
+}
+
+function glitchCoverage(coverage: number, x: number, y: number, settings: HalftoneSettings) {
+  let result = coverage;
+  const corrupt = settings.macroblockCorrupt ?? 0;
+  if (corrupt > 0 && ((Math.floor(x / Math.max(4, settings.blockShiftSize ?? 16)) + Math.floor(y / Math.max(4, settings.blockShiftSize ?? 16))) % 10) / 10 < corrupt) {
+    if (((x * 19 + y * 7) % 100) / 100 < (settings.macroblockDropout ?? 0.25)) result = 0;
+    else result = Math.round(result * 4) / 4;
+  }
+  if ((settings.bitmapSort ?? 0) > 0 && ((settings.bitmapSortVertical ? x : y) % 9) < settings.bitmapSort! * 9) result = Math.round(result * 5) / 5;
+  return clamp(result);
 }
 
 function sampleCoverage(field: Float32Array, width: number, height: number, x: number, y: number) {
@@ -607,7 +618,8 @@ function renderPlateDots(
     maxX: content.maxX / sourceWidth * width,
     maxY: content.maxY / sourceHeight * height,
   };
-  const field = buildCoverageField(pixels, plate, settings);
+  const diffusionField = settings.diffusionEnabled ? buildDiffusionField(pixels, plate, settings) : null;
+  const glitchField = settings.diffusionEnabled ? null : buildCoverageField(pixels, plate, settings);
   const half = diagonal / 2 + cell;
   const centerX = width / 2;
   const centerY = height / 2;
@@ -630,9 +642,12 @@ function renderPlateDots(
       const sourceY = Math.round((y / height) * sourceHeight);
       const sampleX = Math.max(0, Math.min(sourceWidth - 1, sourceX));
       const sampleY = Math.max(0, Math.min(sourceHeight - 1, sourceY));
+      const index = (sampleY * sourceWidth + sampleX) * 4;
       const insideArtwork = x >= contentOutput.minX && x <= contentOutput.maxX && y >= contentOutput.minY && y <= contentOutput.maxY;
       if (!insideArtwork) continue;
-      const coverage = field[sampleY * sourceWidth + sampleX];
+      const coverage = diffusionField
+        ? glitchCoverage(diffusionField[sampleY * sourceWidth + sampleX], x, y, settings)
+        : glitchField![sampleY * sourceWidth + sampleX];
       const dotSize = cell * Math.sqrt(coverage) * 1.04;
       if (stamp) {
         if (dotSize > 0.12) context.drawImage(stamp, x - dotSize / 2, y - dotSize / 2, dotSize, dotSize);
@@ -848,111 +863,57 @@ export function renderPlateSvg(
   plate: Exclude<Plate, "composite">,
   options: RenderOptions = {},
 ) {
-  if (settings.dotShape === "custom" && !settings.customShape) throw new Error("Import an SVG before rendering custom dots.");
+  if (!settings.visible[plate] || (settings.grayscale && plate !== "black")) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><g fill="#000000"/></svg>`;
+  }
   const naturalWidth = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
   const naturalHeight = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
   const documentDimensions = options.document
     ? getSheetPixelDimensions(options.document.sheetSize, options.document.orientation)
     : null;
-  const { width, height } = documentDimensions
-    ? getDocumentTargetDimensions(documentDimensions.width, documentDimensions.height, options.width, options.height)
-    : { width: Math.max(1, Math.round(options.width ?? naturalWidth)), height: Math.max(1, Math.round(options.height ?? naturalHeight)) };
+  const width = options.width ?? documentDimensions?.width ?? naturalWidth;
+  const height = options.height ?? documentDimensions?.height ?? naturalHeight;
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = width;
+  sampleCanvas.height = height;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampleContext) throw new Error("SVG export could not create a sampling canvas");
+  sampleContext.fillStyle = "#ffffff";
+  sampleContext.fillRect(0, 0, width, height);
+  if (options.document && documentDimensions) {
+    drawDocumentArtwork(sampleContext, source, naturalWidth, naturalHeight, options.document, documentDimensions.width, documentDimensions.height, width, height);
+  } else {
+    sampleContext.drawImage(source, 0, 0, width, height);
+  }
+  const pixels = sampleContext.getImageData(0, 0, width, height);
+  const field = buildCoverageField(pixels, plate, settings);
+  const content = visibleContentBounds(pixels);
+  const angle = (settings.angles[plate] * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const cell = Math.max(0.01, settings.cellSize);
+  const diagonal = Math.ceil(Math.hypot(width, height));
+  const half = diagonal / 2 + cell;
+  const centerX = width / 2;
+  const centerY = height / 2;
   const shapes: string[] = [];
-  const definitions: string[] = [];
-  const customDots = settings.dotShape === "custom" && settings.customShape;
-  if (customDots && !settings.diffusionEnabled) definitions.push(svgSymbol(customDots, "dot-shape"));
-
-  // Keep hidden plates at the job's full dimensions, including registration.
-  if (settings.visible[plate] && (!settings.grayscale || plate === "black")) {
-    const sampleCanvas = document.createElement("canvas");
-    const sampleScale = options.preview ? Math.min(1, 1100 / Math.max(width, height)) : 1;
-    sampleCanvas.width = Math.max(1, Math.round(width * sampleScale));
-    sampleCanvas.height = Math.max(1, Math.round(height * sampleScale));
-    const sw = sampleCanvas.width;
-    const sh = sampleCanvas.height;
-    const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-    if (!sampleContext) throw new Error("SVG export could not create a sampling canvas");
-    if (options.document && documentDimensions) {
-      sampleContext.fillStyle = "#ffffff";
-      sampleContext.fillRect(0, 0, sw, sh);
-      drawDocumentArtwork(sampleContext, source, naturalWidth, naturalHeight, options.document, documentDimensions.width, documentDimensions.height, sw, sh);
-    } else {
-      sampleContext.drawImage(source, 0, 0, sw, sh);
-    }
-    const pixels = sampleContext.getImageData(0, 0, sw, sh);
-    if (settings.diffusionEnabled) {
-      const field = buildDiffusionField(pixels, plate, settings);
-      const pw = width / sw;
-      const ph = height / sh;
-      // Coalesce adjacent bitmap pixels into vector runs; preserve the raster
-      // renderer's threshold and quarter-pixel overlap.
-      for (let y = 0; y < sh; y++) {
-        for (let x = 0; x < sw;) {
-          if (field[y * sw + x] < 0.5) { x++; continue; }
-          const from = x++;
-          while (x < sw && field[y * sw + x] >= 0.5) x++;
-          if (shapes.length >= MAX_EXPORT_GRID_POINTS) throw new Error("SVG export exceeds the vector mark limit.");
-          shapes.push(`<rect x="${from * pw}" y="${y * ph}" width="${(x - from) * pw + 0.25}" height="${ph + 0.25}"/>`);
-        }
-      }
-    } else {
-      const field = buildCoverageField(pixels, plate, settings);
-      const content = visibleContentBounds(pixels);
-      const angle = (settings.angles[plate] * Math.PI) / 180;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const scale = documentDimensions ? width / documentDimensions.width : width / naturalWidth;
-      const minimumCell = documentDimensions ? (options.preview ? 3 : 0.01) : 3;
-      const cell = Math.max(minimumCell, settings.cellSize * scale);
-      const half = Math.ceil(Math.hypot(width, height)) / 2 + cell;
-      if (estimateGridPoints(width, height, cell, settings.angles[plate]) > MAX_EXPORT_GRID_POINTS) {
-        throw new Error("SVG export exceeds the vector mark limit. Increase cell size.");
-      }
-      for (let u = -half; u <= half; u += cell) {
-        for (let v = -half; v <= half; v += cell) {
-          const x = width / 2 + u * cos - v * sin;
-          const y = height / 2 + u * sin + v * cos;
-          if (x < -cell || y < -cell || x > width + cell || y > height + cell) continue;
-          if (x < content.minX / sw * width || x > content.maxX / sw * width ||
-              y < content.minY / sh * height || y > content.maxY / sh * height) continue;
-          const sx = Math.max(0, Math.min(sw - 1, Math.round(x / width * sw)));
-          const sy = Math.max(0, Math.min(sh - 1, Math.round(y / height * sh)));
-          const size = cell * Math.sqrt(field[sy * sw + sx]) * 1.04;
-          if (size <= 0.12) continue;
-          shapes.push(customDots ? svgUse("dot-shape", x, y, size)
-            : svgDot(x, y, size, settings.dotShape, (settings.strokeWidth ?? 1) * scale));
-        }
-      }
+  for (let u = -half; u <= half; u += cell) {
+    for (let v = -half; v <= half; v += cell) {
+      const x = centerX + u * cos - v * sin;
+      const y = centerY + u * sin + v * cos;
+      if (x < -cell || y < -cell || x > width + cell || y > height + cell) continue;
+      const sampleX = Math.max(0, Math.min(width - 1, Math.round(x)));
+      const sampleY = Math.max(0, Math.min(height - 1, Math.round(y)));
+      if (sampleX < content.minX || sampleX > content.maxX || sampleY < content.minY || sampleY > content.maxY) continue;
+      const coverage = field[sampleY * width + sampleX];
+      const size = cell * Math.sqrt(coverage) * 1.04;
+      if (size <= 0.12) continue;
+      shapes.push(svgDot(x, y, size, settings.dotShape, settings.strokeWidth ?? 1));
     }
   }
-  let registration = "";
-  if (options.registration) {
-    const size = options.registrationSize ?? Math.max(7, Math.round(Math.min(width, height) * 0.014));
-    const offset = options.registrationOffset ?? Math.max(14, Math.round(Math.min(width, height) * 0.035));
-    const points = options.registrationMode === "centered"
-      ? [[width / 2, offset], [width / 2, height - offset]]
-      : [[offset, offset], [width - offset, offset], [offset, height - offset], [width - offset, height - offset]];
-    if (options.registrationShape) {
-      definitions.push(svgSymbol(options.registrationShape, "registration-shape"));
-      registration = points.map(([x, y]) => `<g opacity="0.7">${svgUse("registration-shape", x, y, size)}</g>`).join("");
-    } else {
-      const radius = size * 0.58;
-      const marks = points.map(([x, y]) => `<g opacity="0.7"><circle cx="${x}" cy="${y}" r="${radius}"/><path d="M ${x - size} ${y} h ${2 * size} M ${x} ${y - size} v ${2 * size}"/></g>`).join("");
-      registration = `<g fill="none" stroke="#000000" stroke-width="${Math.max(0.5, options.registrationWeight ?? 1)}">${marks}</g>`;
-    }
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${(width / DOCUMENT_DPI).toFixed(4)}in" height="${(height / DOCUMENT_DPI).toFixed(4)}in" viewBox="0 0 ${width} ${height}"><defs>${definitions.join("")}</defs><g fill="#000000" stroke="none">${shapes.join("")}</g>${registration}</svg>`;
-}
-
-function svgSymbol(asset: CustomShapeAsset, id: string) {
-  // Preparation validates saved assets for both raster and vector output.
-  // IDs are internal constants, never filenames.
-  const svg = preparedCustomShapeSvg(asset);
-  return svg.replace(/^<svg\b/, `<symbol id="${id}"`).replace(/<\/svg>$/, "</symbol>");
-}
-
-function svgUse(id: string, x: number, y: number, size: number) {
-  return `<use href="#${id}" x="${x - size / 2}" y="${y - size / 2}" width="${size}" height="${size}"/>`;
+  const physicalWidth = (width / DOCUMENT_DPI).toFixed(4);
+  const physicalHeight = (height / DOCUMENT_DPI).toFixed(4);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${physicalWidth}in" height="${physicalHeight}in" viewBox="0 0 ${width} ${height}"><g fill="#000000" stroke="none">${shapes.join("")}</g></svg>`;
 }
 
 function svgDot(x: number, y: number, size: number, shape: DotShape, strokeWidth: number) {
@@ -965,7 +926,7 @@ function svgDot(x: number, y: number, size: number, shape: DotShape, strokeWidth
     return `<path d="M ${x - bar} ${y - radius} H ${x + bar} V ${y + radius} H ${x - bar} Z M ${x - radius} ${y - bar} H ${x + radius} V ${y + bar} H ${x - radius} Z"/>`;
   }
   if (shape === "line") return `<rect x="${x - radius}" y="${y - size * 0.16}" width="${size}" height="${size * 0.32}" rx="${size * 0.16}"/>`;
-  if (shape === "circle-outline" && strokeWidth < radius) return `<circle cx="${x}" cy="${y}" r="${Math.max(0, radius - strokeWidth / 2)}" fill="none" stroke="#000000" stroke-width="${strokeWidth}"/>`;
+  if (shape === "circle-outline") return `<circle cx="${x}" cy="${y}" r="${Math.max(0, radius - strokeWidth / 2)}" fill="none" stroke="#000000" stroke-width="${strokeWidth}"/>`;
   return `<circle cx="${x}" cy="${y}" r="${radius}"/>`;
 }
 

@@ -27,8 +27,31 @@ const DECLARED_COLORS = new Set([
   "54,54,54",    // stage-rule
 ]);
 
+
+// Authored artboard treatment from GitHub main 3084f80. These are exact
+// selector/property/value exceptions, not additions to the global palette.
+const ARTBOARD_SOURCE: Record<string, Record<string, string>> = {
+  ".canvas-stage": { background: "#3d3e40", "box-shadow": "inset 0 0 0 1px #222324" },
+  ".stage-toolbar, .stage-footer": { background: "#363739" },
+  ".stage-body": { background: "#2e2f31" },
+  ".canvas-scroll": { "background-color": "#707174", border: "6px solid #2e2f31", "box-shadow": "inset 0 0 0 1px #85868a, inset 0 0 0 3px #555659" },
+  ".artboard-wrap": { border: "2px solid #c82828", background: "#f8f7f2", "box-shadow": "0 0 0 5px #252628, 0 8px 18px rgba(0, 0, 0, 0.28)" },
+  ".artboard-label": { color: "#e1e1e1" },
+};
+const borderPaint = (color: string) => ({
+  borderTopColor: color, borderRightColor: color, borderBottomColor: color, borderLeftColor: color,
+});
+const ARTBOARD_COMPUTED: Record<string, Record<string, string>> = {
+  ".canvas-stage": { backgroundColor: "rgb(61, 62, 64)", boxShadow: "rgb(34, 35, 36) 0px 0px 0px 1px inset" },
+  ".stage-toolbar, .stage-footer": { backgroundColor: "rgb(54, 55, 57)" },
+  ".stage-body": { backgroundColor: "rgb(46, 47, 49)" },
+  ".canvas-scroll": { backgroundColor: "rgb(112, 113, 116)", ...borderPaint("rgb(46, 47, 49)"), boxShadow: "rgb(133, 134, 138) 0px 0px 0px 1px inset, rgb(85, 86, 89) 0px 0px 0px 3px inset" },
+  ".artboard-wrap": { backgroundColor: "rgb(248, 247, 242)", ...borderPaint("rgb(200, 40, 40)"), boxShadow: "rgb(37, 38, 40) 0px 0px 0px 5px, rgba(0, 0, 0, 0.28) 0px 8px 18px 0px" },
+  ".artboard-label": { color: "rgb(225, 225, 225)", outlineColor: "rgb(225, 225, 225)", ...borderPaint("rgb(225, 225, 225)") },
+};
+
 async function auditComputedPaint(page: Page): Promise<string[]> {
-  return page.evaluate((declared) => {
+  return page.evaluate(({ declared, artboard }) => {
     const permitted = new Set(declared);
     const properties = [
       "color",
@@ -180,6 +203,7 @@ async function auditComputedPaint(page: Page): Promise<string[]> {
           continue;
         }
         const value = styles[property];
+        if (!pseudo && Object.entries(artboard).some(([selector, allowed]) => element.matches(selector) && allowed[property] === value)) continue;
         if (!value || value === "none" || value === "transparent") continue;
         const label = `${element.tagName}.${element.className}${pseudo ?? ""} ${property}`;
         if (property === "boxShadow") {
@@ -196,7 +220,7 @@ async function auditComputedPaint(page: Page): Promise<string[]> {
       check(element, "::after");
     }
     return out;
-  }, [...DECLARED_COLORS]);
+  }, { declared: [...DECLARED_COLORS], artboard: ARTBOARD_COMPUTED });
 }
 
 async function auditStylesheetSource(
@@ -204,9 +228,18 @@ async function auditStylesheetSource(
   css: string,
 ): Promise<string[]> {
   return page.evaluate(
-    ({ source, declared }) => {
+    ({ source, declared, artboard }) => {
       const permitted = new Set(declared);
-      const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
+      const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/([^{}]+)\{([^{}]*)\}/g, (rule, selector: string, body: string) => {
+        const allowed = artboard[selector.trim().replace(/\s+/g, " ")];
+        if (!allowed) return rule;
+        return selector + "{" + body.split(";").map((declaration) => {
+          const colon = declaration.indexOf(":");
+          const property = declaration.slice(0, colon).trim();
+          const value = declaration.slice(colon + 1).trim();
+          return allowed[property] === value ? "" : declaration;
+        }).join(";") + "}";
+      });
       const decoded = withoutComments.replace(/%[0-9a-f]{2}/gi, (escape) =>
         String.fromCharCode(Number.parseInt(escape.slice(1), 16)),
       );
@@ -270,7 +303,7 @@ async function auditStylesheetSource(
 
       return [...new Set(out)];
     },
-    { source: css, declared: [...DECLARED_COLORS] },
+    { source: css, declared: [...DECLARED_COLORS], artboard: ARTBOARD_SOURCE },
   );
 }
 
@@ -381,7 +414,35 @@ test.describe("DR.GLITCH design system", () => {
     ).toBe(true);
   });
 
-  test("every element has zero border radius", async ({ page }) => {
+  test("artboard exceptions stay exact and cannot leak into other chrome", async ({ page }) => {
+    for (const [selector, properties] of Object.entries(ARTBOARD_COMPUTED)) {
+      const elements = page.locator(selector);
+      expect(await elements.count()).toBeGreaterThan(0);
+      for (const element of await elements.all()) {
+        for (const [property, value] of Object.entries(properties)) {
+          expect(await element.evaluate((el, property) => getComputedStyle(el)[property as keyof CSSStyleDeclaration], property)).toBe(value);
+        }
+      }
+    }
+    await page.getByTestId("stage-halftone-cmyk").click();
+    const dials = page.locator(".ink-chip-dial");
+    await expect(dials).toHaveCount(4);
+    for (const dial of await dials.all()) {
+      await expect(dial).toHaveCSS("border-radius", "50%");
+      const box = await dial.boundingBox();
+      expect(box!.width).toBe(box!.height);
+    }
+    const leaked = await auditStylesheetSource(page, ".wrong-selector { background: #3d3e40; }");
+    expect(leaked).not.toEqual([]);
+    const changed = await auditStylesheetSource(page, ".artboard-wrap { box-shadow: 0 0 0 5px #252628, 0 8px 19px rgba(0, 0, 0, 0.28); }");
+    expect(changed).not.toEqual([]);
+    await page.locator(".artboard-wrap").evaluate((element) => {
+      (element as HTMLElement).style.boxShadow = "0 0 0 5px #252628, 0 8px 19px rgba(0, 0, 0, 0.28)";
+    });
+    expect((await auditComputedPaint(page)).some((entry) => entry.includes("artboard-wrap") && entry.includes("boxShadow"))).toBe(true);
+  });
+
+  test("chrome is square except the four circular angle dials", async ({ page }) => {
     // querySelectorAll("*") cannot see ::before/::after — the spec's
     // "hairline crop/registration ticks at panel corners" (§5) are likely
     // implemented as pseudo-elements, so a rounded corner there would be
@@ -392,6 +453,7 @@ test.describe("DR.GLITCH design system", () => {
         const s = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
         if (pseudo && s.content === "none") return; // pseudo-element doesn't render
         const r = s.borderRadius;
+        if (!pseudo && el.matches(".ink-chip-dial") && r === "50%") return;
         if (r !== "" && r !== "0px" && !r.startsWith("0px 0px 0px 0px")) {
           found.push(`${el.tagName}.${el.className}${pseudo ?? ""}: ${r}`);
         }
@@ -431,7 +493,7 @@ test.describe("DR.GLITCH design system", () => {
     expect(gradients).toEqual([]);
   });
 
-  test("no blurred shadows; offsets only", async ({ page }) => {
+  test("no blurred chrome shadows outside the exact authored artboard shadow", async ({ page }) => {
     const blurred = await page.evaluate(() => {
       // Chromium's computed boxShadow is a comma-separated list of shadows,
       // e.g. "rgba(0, 0, 0, .35) 0px 2px 4px 0px, rgba(0, 0, 0, .44) 0px 25px 60px 0px".
@@ -476,6 +538,7 @@ test.describe("DR.GLITCH design system", () => {
         const s = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
         if (pseudo && s.content === "none") return;
         const shadow = s.boxShadow;
+        if (!pseudo && el.matches(".artboard-wrap") && shadow === "rgb(37, 38, 40) 0px 0px 0px 5px, rgba(0, 0, 0, 0.28) 0px 8px 18px 0px") return;
         if (hasBlur(shadow)) {
           found.push(`${el.tagName}.${el.className}${pseudo ?? ""}: ${shadow}`);
         }

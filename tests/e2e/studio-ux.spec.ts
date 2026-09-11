@@ -145,8 +145,29 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
         expect(angleOutline.width).toBeGreaterThan(0);
       }
 
-      if (index < order.length - 1) await page.keyboard.press("Tab");
+      if (index < order.length - 1) {
+        await page.keyboard.press("Tab");
+        const dial = page.locator(".ink-chip-dial-" + order[index + 1]);
+        await expect(dial).toBeFocused();
+        const dialOutline = await dial.evaluate((el) => getComputedStyle(el).outlineWidth);
+        expect(parseFloat(dialOutline)).toBeGreaterThan(0);
+        await page.keyboard.press("Tab");
+      }
     }
+  });
+
+  test("angle dials expose valid ranges and all slider keyboard controls", async ({ page }) => {
+    const dial = page.locator(".ink-chip-dial-cyan");
+    const field = page.getByTestId("ink-angle-cyan");
+    await dial.focus();
+    for (const [key, value] of [["Home", "0"], ["ArrowUp", "1"], ["ArrowRight", "2"], ["ArrowDown", "1"], ["ArrowLeft", "0"], ["End", "359"]]) {
+      await dial.press(key);
+      await expect(dial).toHaveAttribute("aria-valuenow", value);
+      await expect(field).toHaveValue(value);
+    }
+    await field.fill("359.5"); await field.press("Enter");
+    expect(Number(await dial.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(Number(await dial.getAttribute("aria-valuemax")));
+    await expect(field).toHaveValue("359.5");
   });
 
   // Empirically verified (not assumed): Chromium never fires a click for
@@ -377,7 +398,10 @@ test.describe("typed numerics", () => {
     await expect(field).toHaveValue("24");
 
     await page.getByTestId("stage-output").click();
-    await expect(page.getByTestId("numeric-opacity-slider")).toBeVisible();
+    const registrationSlider = page.getByTestId("numeric-registrationSize-slider");
+    await expect(registrationSlider).toBeVisible();
+    await registrationSlider.fill("240");
+    await expect(page.getByTestId("numeric-registrationSize")).toHaveValue("240");
   });
 
   test("numeric units and consequence hints are announced with the field", async ({
@@ -574,8 +598,8 @@ test.describe("stage spine and keyboard", () => {
     await page.waitForSelector('[data-testid="artwork-canvas"]');
   });
 
-  test("all four stages are visible without scrolling", async ({ page }) => {
-    for (const id of ["artwork", "halftone-cmyk", "diffusion", "output"]) {
+  test("all five stages are visible without scrolling", async ({ page }) => {
+    for (const id of ["artwork", "halftone-cmyk", "diffusion", "glitch", "output"]) {
       await expect(page.getByTestId(`stage-${id}`)).toBeInViewport();
     }
   });
@@ -599,7 +623,8 @@ test.describe("stage spine and keyboard", () => {
       ["artwork", "ARTBOARD"],
       ["halftone-cmyk", "HALFTONE / CMYK"],
       ["diffusion", "DIFFUSION"],
-      ["output", "OUTPUT"],
+      ["glitch", "GLITCH"],
+      ["output", "OUTPUT / REGISTRATION"],
     ]) {
       const measurements = await page.getByTestId(`stage-${id}`).evaluate(
         (button, expectedLabel) => {
@@ -638,7 +663,7 @@ test.describe("stage spine and keyboard", () => {
   test("clicking a stage switches to a distinct inspector panel", async ({
     page,
   }) => {
-    const ids = ["artwork", "halftone-cmyk", "diffusion", "output"] as const;
+    const ids = ["artwork", "halftone-cmyk", "diffusion", "glitch", "output"] as const;
     for (const id of ids) {
       await page.getByTestId(`stage-${id}`).click();
       await expect(page.getByTestId(`stage-${id}`)).toHaveAttribute(
@@ -655,7 +680,7 @@ test.describe("stage spine and keyboard", () => {
   test("plate controls stay inside the left Halftone / CMYK step only", async ({
     page,
   }) => {
-    for (const id of ["artwork", "diffusion", "output"]) {
+    for (const id of ["artwork", "diffusion", "glitch", "output"]) {
       await page.getByTestId(`stage-${id}`).click();
       await expect(page.locator(".ink-rail")).toBeHidden();
       await expect(page.getByTestId("active-plate-label")).toBeHidden();
@@ -668,7 +693,7 @@ test.describe("stage spine and keyboard", () => {
     await expect(
       page.getByTestId("stage-surface").locator(".ink-rail"),
     ).toHaveCount(0);
-    await expect(page.getByTestId("active-plate-label")).toContainText("ALL");
+    await expect(page.getByTestId("active-plate-label")).toContainText("Viewing: Composite");
   });
 
   test("inspector collapse and stage selection both change the workspace", async ({
@@ -795,7 +820,7 @@ test.describe("press workflow preflight", () => {
 
     await expect(page.getByTestId("numeric-cellSize")).toHaveValue("12");
     await expect(screen.getByRole("combobox", { name: "Dot shape", exact: true })).toHaveValue("round");
-    await expect(page.getByRole("status")).toContainText("Screen controls reset");
+    await expect(page.getByRole("status")).toContainText("Halftone / CMYK controls reset");
   });
 
   test("preflight names hidden plates and missing registration marks", async ({

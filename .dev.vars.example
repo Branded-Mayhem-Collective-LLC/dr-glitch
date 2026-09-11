@@ -1,0 +1,4 @@
+# Local development only. Never commit .dev.vars or reuse a production secret.
+BETTER_AUTH_URL="http://127.0.0.1:4343"
+# Replace with at least 32 random characters; this placeholder deliberately fails closed.
+BETTER_AUTH_SECRET="replace-me"
