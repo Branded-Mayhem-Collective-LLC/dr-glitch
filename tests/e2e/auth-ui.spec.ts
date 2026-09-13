@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { activateTool, openFreshStudio } from "./helpers/workstation";
 
 const AUTH_ROUTES = [
   { path: "/login", heading: "Sign in", action: "Sign in" },
@@ -106,8 +107,7 @@ test.describe("DR.GLITCH auth surfaces", () => {
 test("session badge remains registered, unshadowed, and inside the studio token scope", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="artwork-canvas"]');
+  await openFreshStudio(page);
 
   const badge = page.getByTestId("session-badge");
   await expect(badge).toBeVisible();
@@ -126,9 +126,8 @@ test("session badge remains registered, unshadowed, and inside the studio token 
 test("session badge focus follows the selected plate ink with a black inner rule", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="artwork-canvas"]');
-  await page.getByTestId("stage-halftone-cmyk").click();
+  await openFreshStudio(page);
+  await activateTool(page, "plates");
 
   const action = page.getByTestId("session-badge-action");
   for (const [plate, color] of [

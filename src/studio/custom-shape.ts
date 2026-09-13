@@ -63,8 +63,24 @@ function geometryBounds(svg: string): Bounds {
   return { x: minX, y: minY, width, height };
 }
 
-export async function importCustomShape(file: File): Promise<CustomShapeAsset> {
+/**
+ * Import an SVG as a custom dot / registration shape.
+ *
+ * Intake first runs the studio's permissive reconstruction (viewBox
+ * defaulting, solid-black paint normalization, whitespace trim), then the
+ * STORED markup is validated against the STRICT src/io sanitizer profile —
+ * the exact validator .drglitch import applies — so every shape the studio
+ * accepts is guaranteed to re-import cleanly from a project archive.
+ * Shapes the archive sanitizer would refuse (CSS display/visibility,
+ * inherit paints, …) are rejected at import time with the sanitizer's own
+ * message instead of failing later on re-open.
+ */
+export async function importCustomShape(
+  file: File,
+  profile: "custom-dot" | "registration-mark" = "custom-dot",
+): Promise<CustomShapeAsset> {
   const { checkSvgFile, sanitizeSvg } = await import("./custom-shape-data");
+  const { sanitizeSvg: sanitizeStrict } = await import("../io/svg-sanitizer");
   checkSvgFile(file.name, file.size);
   const svg = sanitizeSvg(await file.text());
   const bounds = geometryBounds(svg);
@@ -89,7 +105,17 @@ export async function importCustomShape(file: File): Promise<CustomShapeAsset> {
     width: (maxX - minX + 1) / ANALYSIS_SIZE * bounds.width,
     height: (maxY - minY + 1) / ANALYSIS_SIZE * bounds.height,
   };
-  const asset = { filename: file.name, svg: withBounds(svg, tight) };
+  // CANONICAL AT INGESTION: the asset carries the STRICT sanitizer's
+  // reconstructed markup — the exact form the hardened .drglitch exporter
+  // demands byte-equality with — so the stored bytes, their SHA-256 asset
+  // id, and every project reference are canonical from the start
+  // (sanitizeSvg is a fixed point on its own output). The permissive
+  // render-form wrapper (custom-shape-data sanitizeSvg: 1024² +
+  // preserveAspectRatio="none" stretch) is re-applied at RENDER time by
+  // prepareCustomShape, so rasterized stamps are unchanged; the strict
+  // root keeps the tight viewBox, which is all the stamp geometry needs.
+  const canonical = sanitizeStrict(withBounds(svg, tight), profile).svg;
+  const asset = { filename: file.name, svg: canonical };
   await prepareCustomShape(asset);
   return asset;
 }
@@ -115,13 +141,13 @@ export function preparedCustomShapeSvg(asset: CustomShapeAsset): string {
   return ready.svg;
 }
 
-export function customShapeStamp(asset: CustomShapeAsset, color: string, maximumDotSize: number): HTMLCanvasElement {
+export function customShapeStamp(asset: CustomShapeAsset, color: string, maximumDotSize: number, options: { cache?: boolean } = {}): HTMLCanvasElement {
   const ready = prepared.get(asset);
   if (!ready) throw new Error("The custom SVG is not ready to render.");
   // Two samples per output pixel, bounded by the renderer's supported cell sizes.
   const resolution = Math.min(2048, Math.max(16, Math.ceil(maximumDotSize * 2)));
   const key = `${color}:${resolution}`;
-  const cached = ready.stamps.get(key);
+  const cached = options.cache === false ? undefined : ready.stamps.get(key);
   if (cached) return cached;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = resolution;
@@ -131,7 +157,9 @@ export function customShapeStamp(asset: CustomShapeAsset, color: string, maximum
   context.fillStyle = color;
   context.fillRect(0, 0, resolution, resolution);
   // Avoid retaining a new canvas for every slider position.
-  if (ready.stamps.size >= 12) ready.stamps.delete(ready.stamps.keys().next().value!);
-  ready.stamps.set(key, canvas);
+  if (options.cache !== false) {
+    if (ready.stamps.size >= 12) ready.stamps.delete(ready.stamps.keys().next().value!);
+    ready.stamps.set(key, canvas);
+  }
   return canvas;
 }

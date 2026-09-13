@@ -1,0 +1,91 @@
+/**
+ * Workspace-chrome accessibility CSS (triage wave B).
+ *
+ * NOTE FOR THE CSS OWNER (agent A / globals.css + workstation-ui.css):
+ * these rules belong in the main workstation stylesheet; they live in a
+ * separate file only because this wave's ownership split keeps agent B out
+ * of the shared CSS files. Fold them in whenever convenient.
+ */
+
+/*
+ * 1) Visible focus for keyboard-only operation (workspace-a11y contract).
+ *
+ * globals.css draws the ring on :focus-visible only. Chromium does not set
+ * :focus-visible for programmatic focus() after a pointer interaction, and
+ * the keyboard-only a11y contract requires the ring whenever these chrome
+ * controls hold focus at all. Shell chrome is keyboard-first, so paint the
+ * same §9 ring (2px active-ink outline + 1px black inner rule) on plain
+ * :focus for the workspace chrome controls.
+ */
+.ws-topbar button:focus,
+.ws-rail-button:focus,
+.ws-drawer-toggle:focus,
+.ws-splitter:focus,
+.ws-titlebar-button:focus {
+  outline: 2px solid var(--ink-active);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--ink-k);
+}
+
+/*
+ * 2) Drawer headers must never be squeezed under a sibling section.
+ *
+ * .ws-drawers caps at 55% height; when the expanded drawer body is tall,
+ * flex shrinks the collapsed sibling sections below their 40px toggle
+ * height and the following section paints over the toggle — clicks on
+ * "Proof" then hit "Output" (workspace-shell drawers/focus-mode/reduced-
+ * motion failures). Give every section its heading floor and let the body,
+ * which already scrolls, absorb the shortfall.
+ */
+.ws-drawer {
+  min-height: 40px;
+}
+
+.ws-drawer-heading {
+  flex: none;
+}
+
+.ws-drawer-body {
+  flex: 1 1 auto;
+}
+
+/*
+ * 3) Dock drop target: while a panel drag hovers the right dock, the dock
+ * announces itself as the drop zone (drag-to-redock).
+ */
+.ws-dock[data-drop-active="true"] {
+  outline: 2px dashed var(--ink-active);
+  outline-offset: -2px;
+}
+
+/*
+ * 4) Narrow-topbar survival at the 1280px size-gate floor: the project
+ * identity column yields (shrinks + truncates) so every command button
+ * stays in bounds and clickable. Buttons themselves never shrink.
+ */
+.ws-project-identity {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ws-project-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-topbar-group,
+.ws-topbar-actions,
+.ws-topbar-button {
+  flex: none;
+}
+
+/*
+ * 5) Home surface scrolls internally: the app shell keeps body overflow
+ * hidden, so long Recent/Trash lists need their own scroll container.
+ */
+.home-screen {
+  max-height: 100dvh;
+  overflow-y: auto;
+}

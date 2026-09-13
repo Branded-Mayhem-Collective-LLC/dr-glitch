@@ -1,8 +1,32 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import {
+  RAIL_ORDER,
+  activateTool,
+  artboardCanvas,
+  choosePanelMenuItem,
+  drawerToggle,
+  ensureDrawerExpanded,
+  exportPanel,
+  openFreshStudio,
+  panel,
+  proofCanvas,
+  railButton,
+  topbarButton,
+  type WorkstationToolId,
+} from "./helpers/workstation";
+
+/**
+ * Migrated from the stage-spine shell (2026-09-12): the spine, inspector,
+ * and `.top-actions` export dropdown were replaced by the workstation rail /
+ * dock / drawers / topbar Export menu. Every surviving assertion keeps its
+ * original intent; assertions whose surface no longer exists contractually
+ * are rewritten against the workspace-contract equivalent (see
+ * docs/specs/2026-09-12-e2e-coverage-map.md §3).
+ */
 
 async function openSeparation(page: Page) {
-  await page.getByTestId("stage-halftone-cmyk").click();
+  await activateTool(page, "plates");
 }
 
 function contrastRatio(foreground: string, background: string) {
@@ -53,8 +77,7 @@ function pngChunks(bytes: Uint8Array) {
 
 test.describe("ink rail", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     await openSeparation(page);
   });
 
@@ -107,14 +130,13 @@ test.describe("ink rail", () => {
 
 test.describe("ink rail — keyboard and screen-reader parity", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     await openSeparation(page);
   });
 
-  // The rail is now the ONLY way to change plates (.plate-tabs removed) —
-  // it must be fully operable without a mouse, with a visible focus
-  // indicator on every chip including composite.
+  // The rail is still the ONLY way to change plate angles — it must be fully
+  // operable without a mouse, with a visible focus indicator on every chip
+  // including composite.
   test("every chip is keyboard-reachable via Tab with a visible focus indicator", async ({
     page,
   }) => {
@@ -228,8 +250,7 @@ test.describe("ink rail — keyboard and screen-reader parity", () => {
 
 test.describe("composite proof label — hidden-plate coherence", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     await openSeparation(page);
   });
 
@@ -255,8 +276,7 @@ test.describe("composite proof label — hidden-plate coherence", () => {
 
 test.describe("channel tinting", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     await openSeparation(page);
   });
 
@@ -287,9 +307,8 @@ test.describe("channel tinting", () => {
 
 test.describe("typed numerics", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
-    await page.getByTestId("stage-halftone-cmyk").click();
+    await openFreshStudio(page);
+    await activateTool(page, "halftone");
   });
 
   test("cell size accepts a typed value", async ({ page }) => {
@@ -321,7 +340,7 @@ test.describe("typed numerics", () => {
     await field.fill("abc");
     await field.press("Enter");
     await expect(field).toHaveValue(before);
-    await expect(page.getByTestId("artwork-canvas")).toBeVisible();
+    await expect(proofCanvas(page)).toBeVisible();
   });
 
   test("empty and whitespace-only numeric drafts revert", async ({ page }) => {
@@ -335,6 +354,18 @@ test.describe("typed numerics", () => {
     await field.fill("   ");
     await field.press("Enter");
     await expect(field).toHaveValue(before);
+  });
+
+  test("valid drafts commit on tool navigation and Escape reverts without stale blur commits", async ({ page }) => {
+    const cell = page.getByTestId("numeric-cellSize");
+    await cell.fill("31");
+    await activateTool(page, "plates");
+    await activateTool(page, "halftone");
+    await expect(cell).toHaveValue("31");
+
+    await cell.fill("47");
+    await cell.press("Escape");
+    await expect(cell).toHaveValue("31");
   });
 
   test("numeric rows meet the 24px hit-target floor", async ({ page }) => {
@@ -390,14 +421,15 @@ test.describe("typed numerics", () => {
     await expect(field).toHaveValue("17");
   });
 
-  test("left-panel numerics expose synchronized sliders", async ({ page }) => {
+  test("panel numerics expose synchronized sliders", async ({ page }) => {
     const field = page.getByTestId("numeric-cellSize");
     const slider = page.getByTestId("numeric-cellSize-slider");
     await expect(slider).toBeVisible();
     await slider.fill("24");
     await expect(field).toHaveValue("24");
 
-    await page.getByTestId("stage-output").click();
+    await activateTool(page, "export");
+    await ensureDrawerExpanded(page, "output");
     const registrationSlider = page.getByTestId("numeric-registrationSize-slider");
     await expect(registrationSlider).toBeVisible();
     await registrationSlider.fill("240");
@@ -419,7 +451,11 @@ test.describe("typed numerics", () => {
   test("the ink rail is the only plate-angle editor", async ({ page }) => {
     await openSeparation(page);
     await expect(page.getByTestId("ink-angle-cyan")).toHaveCount(1);
-    await expect(page.locator(".inspector .angle-field")).toHaveCount(0);
+    // The single editor lives inside the Plates panel; no other panel or
+    // drawer duplicates it (the old inspector angle fields stay gone).
+    await expect(
+      panel(page, "plates").getByTestId("ink-angle-cyan"),
+    ).toHaveCount(1);
   });
 
   test("plate angles are typed or dragged inline without changing the soloed plate", async ({
@@ -464,6 +500,11 @@ test.describe("typed numerics", () => {
   test("zoom is type-first while retaining a slider for drag adjustment", async ({
     page,
   }) => {
+    // Contract correction: the coverage map places `numeric-zoom` in the
+    // Proof drawer (§ Proof drawer), which is collapsed by default (Document
+    // is the default-expanded drawer), so the drawer must be expanded before
+    // the field is reachable. Assertions unchanged.
+    await ensureDrawerExpanded(page, "proof");
     const zoom = page.getByTestId("numeric-zoom");
     await zoom.fill("90");
     await zoom.press("Enter");
@@ -491,65 +532,62 @@ test.describe("typed numerics", () => {
   });
 });
 
-test.describe("Artwork stage — restored layout controls", () => {
+test.describe("Select panel and Document drawer — restored layout controls", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
-    await page.getByTestId("stage-artwork").click();
+    await openFreshStudio(page);
+    await activateTool(page, "select");
+    await ensureDrawerExpanded(page, "document");
   });
 
-  test("keeps the complete layout toolset inside the left inspector with restored defaults", async ({
+  // The old Artwork stage split in two: sheet size / orientation moved into
+  // the Document drawer, placement (scale, fit, mirror) into the
+  // Select/Transform panel. The complete toolset must survive with the same
+  // defaults.
+  test("keeps the complete layout toolset with restored defaults", async ({
     page,
   }) => {
-    const inspector = page.getByTestId("inspector");
-    const artwork = inspector.getByTestId("stage-panel-artwork");
+    const select = panel(page, "select");
 
-    const sheetSize = artwork.getByTestId("artwork-sheet-size");
+    const sheetSize = page.getByTestId("artwork-sheet-size");
     await expect(sheetSize).toBeVisible();
     expect(await sheetSize.evaluate((element) => element.tagName)).toBe("SELECT");
     await expect(sheetSize).toHaveValue("11x15");
 
-    const portrait = artwork.getByTestId("artwork-orientation-portrait");
-    const landscape = artwork.getByTestId("artwork-orientation-landscape");
+    const portrait = page.getByTestId("artwork-orientation-portrait");
+    const landscape = page.getByTestId("artwork-orientation-landscape");
     await expect(portrait).toHaveAttribute("aria-pressed", "true");
     await expect(landscape).toHaveAttribute("aria-pressed", "false");
 
-    await expect(artwork.getByTestId("numeric-artworkScale")).toHaveValue("100");
+    await expect(select.getByTestId("numeric-artworkScale")).toHaveValue("100");
     await expect(
-      artwork.getByTestId("numeric-artworkScale-unit"),
+      select.getByTestId("numeric-artworkScale-unit"),
     ).toContainText("%");
     await expect(
-      artwork.getByTestId("numeric-artworkScale-scrub"),
+      select.getByTestId("numeric-artworkScale-scrub"),
     ).toBeVisible();
-    await expect(artwork.getByTestId("artwork-fit")).toBeVisible();
+    await expect(select.getByTestId("artwork-fit")).toBeVisible();
 
-    const mirror = artwork.getByTestId("artwork-mirror");
+    const mirror = select.getByTestId("artwork-mirror");
     await expect(mirror).toHaveAttribute("type", "checkbox");
     await expect(mirror).not.toBeChecked();
     await expect(
-      artwork.getByTestId("artwork-mirror-direction-horizontal"),
+      select.getByTestId("artwork-mirror-direction-horizontal"),
     ).toBeVisible();
     await expect(
-      artwork.getByTestId("artwork-mirror-direction-vertical"),
+      select.getByTestId("artwork-mirror-direction-vertical"),
     ).toBeVisible();
-
-    await expect(page.getByTestId("stage-surface").locator(".view-status")).toContainText(
-      "Centered artwork proof",
-    );
   });
 
   test("Scale supports direct typing and value scrubbing", async ({ page }) => {
-    const artwork = page
-      .getByTestId("inspector")
-      .getByTestId("stage-panel-artwork");
-    const scale = artwork.getByTestId("numeric-artworkScale");
+    const select = panel(page, "select");
+    const scale = select.getByTestId("numeric-artworkScale");
 
     await expect(scale).toBeVisible();
     await scale.fill("125");
     await scale.press("Enter");
     await expect(scale).toHaveValue("125");
 
-    const scrub = artwork.getByTestId("numeric-artworkScale-scrub");
+    const scrub = select.getByTestId("numeric-artworkScale-scrub");
     const box = await scrub.boundingBox();
     expect(box).not.toBeNull();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
@@ -565,12 +603,9 @@ test.describe("Artwork stage — restored layout controls", () => {
   test("selecting landscape changes the rendered canvas aspect", async ({
     page,
   }) => {
-    const artwork = page
-      .getByTestId("inspector")
-      .getByTestId("stage-panel-artwork");
-    const portrait = artwork.getByTestId("artwork-orientation-portrait");
-    const landscape = artwork.getByTestId("artwork-orientation-landscape");
-    const canvas = page.getByTestId("artwork-canvas");
+    const portrait = page.getByTestId("artwork-orientation-portrait");
+    const landscape = page.getByTestId("artwork-orientation-landscape");
+    const canvas = proofCanvas(page);
 
     await expect(canvas).toBeVisible();
     const portraitSize = await canvas.evaluate((element: HTMLCanvasElement) => ({
@@ -592,66 +627,41 @@ test.describe("Artwork stage — restored layout controls", () => {
   });
 });
 
-test.describe("stage spine and keyboard", () => {
+test.describe("tool rail and keyboard", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
   });
 
-  test("all five stages are visible without scrolling", async ({ page }) => {
-    for (const id of ["artwork", "halftone-cmyk", "diffusion", "glitch", "output"]) {
-      await expect(page.getByTestId(`stage-${id}`)).toBeInViewport();
+  test("all eight tools are visible without scrolling", async ({ page }) => {
+    for (const tool of RAIL_ORDER) {
+      await expect(railButton(page, tool)).toBeInViewport();
     }
   });
 
-  test("stage labels have no numeric badges and completion is explicit", async ({
-    page,
-  }) => {
-    await expect(page.getByTestId("stage-artwork")).toHaveAttribute(
-      "data-complete",
-      "true",
-    );
-    await expect(
-      page.getByTestId("stage-artwork").getByLabel("complete"),
-    ).toBeVisible();
-  });
-
-  test("every stage name is fully visible without clipping", async ({
-    page,
-  }) => {
-    for (const [id, label] of [
-      ["artwork", "ARTBOARD"],
-      ["halftone-cmyk", "HALFTONE / CMYK"],
-      ["diffusion", "DIFFUSION"],
-      ["glitch", "GLITCH"],
-      ["output", "OUTPUT / REGISTRATION"],
-    ]) {
-      const measurements = await page.getByTestId(`stage-${id}`).evaluate(
-        (button, expectedLabel) => {
-          const name = button.querySelector<HTMLElement>(".stage-label")!;
-          return {
-            text: name.textContent?.trim(),
-            buttonFits: button.scrollWidth <= button.clientWidth,
-            labelFits: name.scrollWidth <= name.clientWidth,
-            expectedLabel,
-          };
-        },
-        label,
-      );
-
-      expect(measurements.text?.toUpperCase()).toBe(measurements.expectedLabel);
-      expect(measurements.buttonFits).toBe(true);
-      expect(measurements.labelFits).toBe(true);
-    }
-  });
-
-  test("inactive stage labels meet WCAG AA contrast", async ({ page }) => {
-    const colors = await page.getByTestId("stage-halftone-cmyk").evaluate((button) => {
-      const label = button.querySelector<HTMLElement>(".stage-label")!;
-      const spine = button.closest<HTMLElement>(".stage-spine")!;
+  // Rewritten from "inactive stage labels meet WCAG AA contrast": the rail
+  // is icon-only (names live on aria-label, asserted in workspace-a11y), so
+  // the drawer toggles are now the visible always-on chrome text this law
+  // applies to.
+  test("drawer toggle labels meet WCAG AA contrast", async ({ page }) => {
+    const colors = await drawerToggle(page, "proof").evaluate((button) => {
+      const effectiveBackground = (start: Element | null): string => {
+        let element: Element | null = start;
+        while (element) {
+          const paint = getComputedStyle(element).backgroundColor;
+          if (
+            paint &&
+            paint !== "transparent" &&
+            !/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0\s*\)/.test(paint)
+          ) {
+            return paint;
+          }
+          element = element.parentElement;
+        }
+        return "rgb(255, 255, 255)";
+      };
       return {
-        foreground: getComputedStyle(label).color,
-        background: getComputedStyle(spine).backgroundColor,
+        foreground: getComputedStyle(button).color,
+        background: effectiveBackground(button),
       };
     });
 
@@ -660,67 +670,74 @@ test.describe("stage spine and keyboard", () => {
     );
   });
 
-  test("clicking a stage switches to a distinct inspector panel", async ({
+  test("activating a rail tool swaps in that tool's sole docked panel", async ({
     page,
   }) => {
-    const ids = ["artwork", "halftone-cmyk", "diffusion", "glitch", "output"] as const;
-    for (const id of ids) {
-      await page.getByTestId(`stage-${id}`).click();
-      await expect(page.getByTestId(`stage-${id}`)).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await expect(page.getByTestId(`stage-panel-${id}`)).toBeVisible();
-      for (const other of ids.filter((candidate) => candidate !== id)) {
-        await expect(page.getByTestId(`stage-panel-${other}`)).toBeHidden();
+    for (const tool of RAIL_ORDER) {
+      await activateTool(page, tool);
+      await expect(panel(page, tool)).toBeVisible();
+      for (const other of RAIL_ORDER.filter((candidate) => candidate !== tool)) {
+        await expect(panel(page, other)).toBeHidden();
       }
     }
   });
 
-  test("plate controls stay inside the left Halftone / CMYK step only", async ({
+  test("plate controls stay inside the Plates tool only", async ({
     page,
   }) => {
-    for (const id of ["artwork", "diffusion", "glitch", "output"]) {
-      await page.getByTestId(`stage-${id}`).click();
+    const others: WorkstationToolId[] = [
+      "select",
+      "layers",
+      "halftone",
+      "diffusion",
+      "glitch",
+      "history",
+      "export",
+    ];
+    for (const tool of others) {
+      await activateTool(page, tool);
       await expect(page.locator(".ink-rail")).toBeHidden();
       await expect(page.getByTestId("active-plate-label")).toBeHidden();
     }
 
     await openSeparation(page);
     await expect(
-      page.getByTestId("stage-panel-halftone-cmyk").locator(".ink-rail"),
+      panel(page, "plates").locator(".ink-rail"),
     ).toBeVisible();
     await expect(
-      page.getByTestId("stage-surface").locator(".ink-rail"),
+      artboardCanvas(page).locator(".ink-rail"),
     ).toHaveCount(0);
     await expect(page.getByTestId("active-plate-label")).toContainText("Viewing: Composite");
   });
 
-  test("inspector collapse and stage selection both change the workspace", async ({
+  // Rewritten from "inspector collapse and stage selection both change the
+  // workspace": the collapsible inspector is contractually replaced by the
+  // dock — closing the docked panel empties the dock, and rail activation
+  // brings a panel back.
+  test("closing the docked panel empties the dock and rail activation restores one", async ({
     page,
   }) => {
-    const inspector = page.getByTestId("inspector");
-    await page.getByRole("button", { name: "Collapse panel" }).click();
-    await expect(inspector).toHaveAttribute("data-collapsed", "true");
-    await expect(
-      page.getByRole("button", { name: "Expand panel" }),
-    ).toBeVisible();
+    // Contract correction: on a fresh project the DOCKED panel is Layers
+    // (coverage map "New-project defaults: Select/Transform active, Layers
+    // docked"), so closing the docked panel means closing ws-panel-layers.
+    await choosePanelMenuItem(page, "layers", "Close");
+    await expect(page.getByTestId("dock-empty")).toBeVisible();
 
-    await page.getByTestId("stage-halftone-cmyk").click();
-    await expect(inspector).toHaveAttribute("data-collapsed", "false");
-    await expect(page.getByTestId("stage-panel-halftone-cmyk")).toBeVisible();
+    await activateTool(page, "halftone");
+    await expect(panel(page, "halftone")).toBeVisible();
+    await expect(page.getByTestId("dock-empty")).toBeHidden();
   });
 
-  test("Space activates a focused stage control without arming pan", async ({
+  test("Space activates a focused rail tool without arming pan", async ({
     page,
   }) => {
-    const stage = page.getByTestId("stage-surface");
-    const output = page.getByTestId("stage-output");
-    await output.focus();
+    const stage = artboardCanvas(page);
+    const exportTool = railButton(page, "export");
+    await exportTool.focus();
     await page.keyboard.press("Space");
 
-    await expect(output).toHaveAttribute("aria-current", "step");
-    await expect(page.getByTestId("stage-panel-output")).toBeVisible();
+    await expect(exportTool).toHaveAttribute("aria-pressed", "true");
+    await expect(panel(page, "export")).toBeVisible();
     await expect(stage).toHaveAttribute("data-pan-armed", "false");
   });
 
@@ -746,6 +763,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("bracket keys step cell size", async ({ page }) => {
+    await activateTool(page, "halftone");
     const field = page.getByTestId("numeric-cellSize");
     const before = Number(await field.inputValue());
     await page.locator("body").press("]");
@@ -755,11 +773,11 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("shortcuts do not fire while typing in a field", async ({ page }) => {
-    await page.getByTestId("stage-halftone-cmyk").click();
+    await activateTool(page, "halftone");
     const field = page.getByTestId("numeric-cellSize");
     await field.click();
     await field.fill("");
-    await field.type("12");
+    await field.pressSequentially("12");
     // '1' and '2' must reach the input, not solo plates.
     await expect(field).toHaveValue("12");
     await openSeparation(page);
@@ -769,7 +787,7 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("space arms panning and dragging moves the proof", async ({ page }) => {
-    const stage = page.getByTestId("stage-surface");
+    const stage = artboardCanvas(page);
     const artboard = page.locator(".artboard-wrap");
     const before = await artboard.evaluate((element) => element.style.transform);
 
@@ -793,8 +811,8 @@ test.describe("stage spine and keyboard", () => {
   });
 
   test("space does not arm panning while typing", async ({ page }) => {
-    const stage = page.getByTestId("stage-surface");
-    await page.getByTestId("stage-halftone-cmyk").click();
+    const stage = artboardCanvas(page);
+    await activateTool(page, "halftone");
     await page.getByTestId("numeric-cellSize").click();
     await page.keyboard.down("Space");
     await expect(stage).toHaveAttribute("data-pan-armed", "false");
@@ -804,19 +822,18 @@ test.describe("stage spine and keyboard", () => {
 
 test.describe("press workflow preflight", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
   });
 
   test("screen controls reset together without touching the engine", async ({
     page,
   }) => {
-    await page.getByTestId("stage-halftone-cmyk").click();
-    const screen = page.getByTestId("stage-panel-halftone-cmyk");
+    await activateTool(page, "halftone");
+    const screen = panel(page, "halftone");
     await page.getByTestId("numeric-cellSize-slider").fill("24");
     await screen.getByRole("combobox", { name: "Dot shape", exact: true }).selectOption("square");
 
-    await page.getByRole("button", { name: "Reset Halftone / CMYK controls" }).click();
+    await screen.getByRole("button", { name: /Reset halftone/i }).click();
 
     await expect(page.getByTestId("numeric-cellSize")).toHaveValue("12");
     await expect(screen.getByRole("combobox", { name: "Dot shape", exact: true })).toHaveValue("round");
@@ -831,8 +848,8 @@ test.describe("press workflow preflight", () => {
     await page.getByTestId("ink-chip-cyan").click();
     await page.keyboard.up("Alt");
 
-    await page.getByTestId("stage-output").click();
-    await page
+    await activateTool(page, "export");
+    await exportPanel(page)
       .getByRole("checkbox", { name: /Registration marks/i })
       .uncheck();
 
@@ -840,10 +857,10 @@ test.describe("press workflow preflight", () => {
       "2 to review",
     );
     await expect(
-      page.locator(".preflight-list li[data-status='review']"),
+      exportPanel(page).locator(".preflight-list li[data-status='review']"),
     ).toHaveCount(2);
-    await expect(page.locator(".preflight-list")).toContainText("C hidden");
-    await expect(page.locator(".preflight-list")).toContainText(
+    await expect(exportPanel(page).locator(".preflight-list")).toContainText("C hidden");
+    await expect(exportPanel(page).locator(".preflight-list")).toContainText(
       "Off — confirm before film",
     );
   });
@@ -855,9 +872,9 @@ test.describe("press workflow preflight", () => {
     const yellow = page.getByTestId("ink-angle-yellow");
     await yellow.fill("15");
     await yellow.press("Enter");
-    await page.getByTestId("stage-output").click();
+    await activateTool(page, "export");
 
-    await expect(page.locator(".preflight-list")).toContainText(
+    await expect(exportPanel(page).locator(".preflight-list")).toContainText(
       "C/Y share 15°",
     );
   });
@@ -865,20 +882,16 @@ test.describe("press workflow preflight", () => {
   test("dense screen load is reviewed and blocks export without changing cell size", async ({
     page,
   }) => {
-    const artwork = page
-      .getByTestId("inspector")
-      .getByTestId("stage-panel-artwork");
-    await artwork.getByTestId("artwork-sheet-size").selectOption("15x22");
+    await ensureDrawerExpanded(page, "document");
+    await page.getByTestId("artwork-sheet-size").selectOption("15x22");
 
-    await page.getByTestId("stage-halftone-cmyk").click();
-    const screen = page.getByTestId("stage-panel-halftone-cmyk");
-    const cellSize = screen.getByTestId("numeric-cellSize");
+    await activateTool(page, "halftone");
+    const cellSize = panel(page, "halftone").getByTestId("numeric-cellSize");
     await cellSize.fill("4");
     await cellSize.press("Enter");
 
-    await page.getByTestId("stage-output").click();
-    const output = page.getByTestId("stage-panel-output");
-    const preflight = output.locator(".preflight-card");
+    await activateTool(page, "export");
+    const preflight = exportPanel(page).locator(".preflight-card");
     const screenLoad = preflight
       .getByRole("listitem")
       .filter({ hasText: "Screen load" });
@@ -888,43 +901,31 @@ test.describe("press workflow preflight", () => {
       "1 to review",
     );
 
-    const topActions = page.locator(".top-actions");
-    await topActions.getByRole("button", { name: /^Export/ }).click();
-    await topActions
-      .locator(".export-menu")
-      .getByRole("button", { name: /Composite PNG/ })
-      .click();
+    await topbarButton(page, "Export").click();
+    await page.getByRole("button", { name: /Composite PNG/ }).click();
 
     await expect(page.getByRole("status")).toHaveText(
       "Export blocked: estimated 2,464,900 marks per plate exceeds the 2,000,000 limit. Increase cell size to export.",
     );
+    await activateTool(page, "halftone");
     await expect(cellSize).toHaveValue("4");
-    await expect(
-      topActions.getByRole("button", { name: /^Export/ }),
-    ).toBeEnabled();
+    await expect(topbarButton(page, "Export")).toBeEnabled();
   });
 
   test("lightweight composite PNG contains one 240-DPI pHYs chunk", async ({
     page,
   }) => {
-    const artwork = page
-      .getByTestId("inspector")
-      .getByTestId("stage-panel-artwork");
-    await artwork.getByTestId("artwork-sheet-size").selectOption("8x10");
+    await ensureDrawerExpanded(page, "document");
+    await page.getByTestId("artwork-sheet-size").selectOption("8x10");
 
-    await page.getByTestId("stage-halftone-cmyk").click();
-    const screen = page.getByTestId("stage-panel-halftone-cmyk");
-    const cellSize = screen.getByTestId("numeric-cellSize");
+    await activateTool(page, "halftone");
+    const cellSize = panel(page, "halftone").getByTestId("numeric-cellSize");
     await cellSize.fill("64");
     await cellSize.press("Enter");
 
-    const topActions = page.locator(".top-actions");
-    await topActions.getByRole("button", { name: /^Export/ }).click();
+    await topbarButton(page, "Export").click();
     const downloadPromise = page.waitForEvent("download");
-    await topActions
-      .locator(".export-menu")
-      .getByRole("button", { name: /Composite PNG/ })
-      .click();
+    await page.getByRole("button", { name: /Composite PNG/ }).click();
     const download = await downloadPromise;
     const downloadPath = await download.path();
     expect(downloadPath).not.toBeNull();
@@ -956,8 +957,8 @@ test.describe("press workflow preflight", () => {
         },
       });
     });
-    await page.getByTestId("stage-output").click();
-    await page.getByRole("button", { name: "Copy job ticket" }).click();
+    await activateTool(page, "export");
+    await exportPanel(page).getByRole("button", { name: "Copy job ticket" }).click();
 
     const ticket = await page.evaluate(
       () => (window as typeof window & { __copiedTicket?: string }).__copiedTicket,

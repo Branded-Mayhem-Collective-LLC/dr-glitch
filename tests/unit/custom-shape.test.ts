@@ -50,10 +50,8 @@ describe("custom SVG data", () => {
   ])("rejects unsupported or active content: %s", (body) => {
     expect(() => sanitizeSvg(svg(body))).toThrow();
   });
-  it.each(["", "not an SVG", "<svg><path></svg>", "<html/>", '<!DOCTYPE svg SYSTEM "https://example.com/dtd"><svg/>'])
-    ("rejects malformed XML: %s", (input) => expect(() => sanitizeSvg(input)).toThrow());
-  it.each(["M0 0L", "M0 0 L1", "M0 0X2 3", "M0 0A5 5 0 2 0 10 10", "L1 2", "M0 0L1e999 2"])
-    ("rejects invalid path data: %s", (d) => expect(() => sanitizeSvg(svg(`<path d="${d}"/>`))).toThrow());
+  it.each(["", "not an SVG", "<svg><path></svg>", "<html/>", '<!DOCTYPE svg SYSTEM "https://example.com/dtd"><svg/>'])("rejects malformed XML: %s", (input) => expect(() => sanitizeSvg(input)).toThrow());
+  it.each(["M0 0L", "M0 0 L1", "M0 0X2 3", "M0 0A5 5 0 2 0 10 10", "L1 2", "M0 0L1e999 2"])("rejects invalid path data: %s", (d) => expect(() => sanitizeSvg(svg(`<path d="${d}"/>`))).toThrow());
   it.each([
     '<path d="M0 0C1 2 3 4 5 6S7 8 9 10Q11 12 13 14T15 16A2 3 0 0 1 20 20z"/>',
     '<circle cx="4" cy="5" r="3"/><ellipse cx="8" cy="9" rx="2" ry="4"/>',

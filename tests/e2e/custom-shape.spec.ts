@@ -1,13 +1,20 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
+import {
+  activateTool,
+  exportPanel,
+  openFreshStudio,
+  panel,
+  topbarButton,
+} from "./helpers/workstation";
 
 test.use({ viewport: { width: 1440, height: 1000 } });
 const triangle = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200"><path fill="red" d="M60 30L100 90H20Z"/></svg>';
 const ring = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200"><path fill-rule="evenodd" d="M20 30H100V90H20Z M40 45V75H80V45Z"/></svg>';
 
 async function screen(page: Page) {
-  await page.getByTestId("stage-halftone-cmyk").click();
+  await activateTool(page, "halftone");
 }
 async function chooseCustom(page: Page) {
   const select = page.getByRole("combobox", { name: "Dot shape", exact: true });
@@ -20,7 +27,7 @@ async function upload(page: Page, name: string, content: string) {
 }
 
 test("import popup applies only on confirmation, restores focus, retains shape on reset", async ({ page }) => {
-  await page.goto("/");
+  await openFreshStudio(page);
   await screen(page);
   await chooseCustom(page);
   await expect(page.getByRole("button", { name: "Use shape", exact: true })).toBeDisabled();
@@ -48,7 +55,7 @@ test("import popup applies only on confirmation, restores focus, retains shape o
   await chooseCustom(page);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(select).toHaveValue("square");
-  await page.getByRole("button", { name: "Reset Halftone / CMYK controls" }).click();
+  await panel(page, "halftone").getByRole("button", { name: /Reset halftone/i }).click();
   await expect(select).toHaveValue("round");
   await expect(page.getByTestId("current-custom-shape")).toHaveText("triangle.svg");
   await chooseCustom(page);
@@ -58,7 +65,7 @@ test("import popup applies only on confirmation, restores focus, retains shape o
 });
 
 test("drop import, empty and oversized files, and replacement never alter the current pattern early", async ({ page }) => {
-  await page.goto("/");
+  await openFreshStudio(page);
   await screen(page);
   await chooseCustom(page);
   await upload(page, "empty.svg", '<svg xmlns="http://www.w3.org/2000/svg"><rect width="40" height="30" fill="none"/></svg>');
@@ -89,7 +96,7 @@ test("drop import, empty and oversized files, and replacement never alter the cu
 });
 
 test("visible bounds include transforms and strokes, trim whitespace, stretch to square and preserve holes", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/tests/e2e/harness.html");
   const result = await page.evaluate(async ({ triangle, ring }) => {
     const modulePath = "/src/studio/custom-shape.ts";
     const { importCustomShape, customShapeStamp } = await import(/* @vite-ignore */ modulePath);
@@ -120,7 +127,7 @@ test("visible bounds include transforms and strokes, trim whitespace, stretch to
 
 test("custom assets round-trip through CMYK and grayscale plate exports and the job ticket", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.goto("/");
+  await openFreshStudio(page);
   await screen(page);
   await chooseCustom(page);
   await upload(page, "ring.svg", ring);
@@ -128,9 +135,11 @@ test("custom assets round-trip through CMYK and grayscale plate exports and the 
   await page.getByRole("button", { name: "Use shape", exact: true }).click();
   await page.getByTestId("numeric-cellSize").fill("40");
   await page.getByTestId("numeric-cellSize").press("Enter");
+  await activateTool(page, "plates");
   for (const mode of ["cmyk", "grayscale"]) {
-    await page.getByRole("combobox", { name: "Color mode", exact: true }).selectOption(mode);
-    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await activateTool(page, "plates");
+    await panel(page, "plates").getByRole("combobox", { name: "Color mode", exact: true }).selectOption(mode);
+    await topbarButton(page, "Export").click();
     const downloadEvent = page.waitForEvent("download");
     await page.getByRole("button", { name: mode === "cmyk" ? /CMYK plate package/ : /Grayscale K plate package/ }).click();
     const download = await downloadEvent;
@@ -158,9 +167,10 @@ test("custom assets round-trip through CMYK and grayscale plate exports and the 
         registration: job.registration, registrationSize: job.registrationSize,
         registrationOffset: job.registrationOffset, registrationWeight: job.registrationWeight,
         registrationShape: job.registrationShape, registrationMode: job.registrationMode,
-        paper: job.document.background === "black" ? "#000000" : "#ffffff", monochromePlate: true, document: job.document });
+        paper: job.document.background === "black" ? "#000000" : "#ffffff", monochromePlate: true, document: job.document, transparent: true });
       const context = canvas.getContext("2d")!;
       const expectedPixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      context.clearRect(0, 0, canvas.width, canvas.height);
       context.drawImage(actual, 0, 0);
       const actualPixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
       return expectedPixels.every((value, index) => value === actualPixels[index]);
@@ -172,7 +182,7 @@ test("custom assets round-trip through CMYK and grayscale plate exports and the 
       writeText: async (text: string) => { (window as typeof window & { __customTicket?: string }).__customTicket = text; },
     } });
   });
-  await page.getByTestId("stage-output").click();
-  await page.getByRole("button", { name: "Copy job ticket" }).click();
+  await activateTool(page, "export");
+  await exportPanel(page).getByRole("button", { name: "Copy job ticket" }).click();
   expect(await page.evaluate(() => (window as typeof window & { __customTicket?: string }).__customTicket)).toContain("Custom SVG: ring.svg (stretched to square)");
 });

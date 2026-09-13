@@ -76,6 +76,12 @@ export const PLATE_META = {
 } as const;
 
 export const MAX_EXPORT_GRID_POINTS = 2_000_000;
+// Default 11×15 CMYK is 38,016,000 plate-pixels. The 40M ceiling keeps that
+// job available while preventing larger multi-plate jobs from allocating the
+// repeated Float32 working fields without an explicit size reduction.
+export const MAX_DIFFUSION_RASTER_PIXELS = 40_000_000;
+// SVG output is measured by coalesced horizontal runs, not halftone cells.
+export const MAX_DIFFUSION_SVG_RUNS = 2_000_000;
 
 export type RenderOptions = {
   plate?: Plate;
@@ -91,6 +97,10 @@ export type RenderOptions = {
   registrationWeight?: number;
   registrationShape?: CustomShapeAsset;
   registrationMode?: "corners" | "centered";
+  /** Exports own and release stamps; interactive previews may cache them. */
+  cacheCustomStamps?: boolean;
+  /** Preserve alpha in formats that support it instead of painting paper. */
+  transparent?: boolean;
 };
 
 export function clamp(value: number, min = 0, max = 1) {
@@ -336,38 +346,98 @@ function diffusionOffset(x: number, y: number, mode: HalftoneSettings["diffusion
   return (((x % 4 === 0 ? 1 : 0) + (y % 4 === 0 ? 1 : 0)) - 0.5) * strength;
 }
 
-export function applyDiffusion(value: number, x: number, y: number, settings: HalftoneSettings) {
-  if (!settings.diffusionEnabled) return value;
-  const intensity = clamp(settings.diffusionIntensity ?? 0.5);
-  const levels = Math.max(2, Math.round(settings.diffusionLevels ?? 8));
-  const denoise = settings.diffusionDenoise ?? 0;
-  const algorithm = settings.diffusionAlgorithm ?? "floyd-steinberg";
-  const noise = denoise === 0 ? 0 : (((x * 13 + y * 29) % 11) - 5) / 5 * Math.abs(denoise) * (denoise > 0 ? 1 : -1);
-  let adjusted = value + noise + diffusionOffset(x, y, settings.diffusionModulation, (settings.diffusionModStrength ?? 0.5) * 0.25);
-  const kernelPattern = algorithm === "none"
-    ? 0
-    : algorithm === "floyd-steinberg"
-      ? ((x + y) % 2 ? 1 : -1)
-      : algorithm === "jarvis-judice-ninke"
-        ? Math.sin((x * 0.7 + y * 0.4))
-        : algorithm === "stucki"
-          ? Math.cos((x * 0.5 - y * 0.8))
-          : algorithm === "burkes"
-            ? ((x % 3) - 1) * 0.8
-            : Math.sin((x + y) * 1.4);
-  adjusted += kernelPattern * intensity * 0.14;
-  const quantized = Math.round(clamp(adjusted) * (levels - 1)) / (levels - 1);
-  const sharpenRadius = Math.max(1, settings.diffusionSharpenRadius ?? 1);
-  const sharpened = (quantized - 0.5) * (1 + (settings.diffusionSharpenStrength ?? 0) * sharpenRadius / 3) + 0.5;
-  return clamp(value * (1 - intensity * 0.35) + sharpened * (intensity * 0.65));
+function deterministicNoise(x: number, y: number, channelIndex: number) {
+  let state = (Math.imul(x + 1, 73856093) ^ Math.imul(y + 1, 19349663) ^ Math.imul(channelIndex + 1, 83492791)) >>> 0;
+  state = Math.imul(state ^ (state >>> 16), 2246822507) >>> 0;
+  return (state / 0xffffffff) * 2 - 1;
 }
 
-function buildDiffusionField(
+function boxBlurField(field: Float32Array, width: number, height: number, radius: number) {
+  const horizontal = new Float32Array(field.length);
+  const output = new Float32Array(field.length);
+  for (let y = 0; y < height; y += 1) {
+    let total = 0;
+    for (let x = -radius; x <= radius; x += 1) total += sampleCoverage(field, width, height, x, y);
+    for (let x = 0; x < width; x += 1) {
+      horizontal[y * width + x] = total / (radius * 2 + 1);
+      total += sampleCoverage(field, width, height, x + radius + 1, y) - sampleCoverage(field, width, height, x - radius, y);
+    }
+  }
+  for (let x = 0; x < width; x += 1) {
+    let total = 0;
+    for (let y = -radius; y <= radius; y += 1) total += sampleCoverage(horizontal, width, height, x, y);
+    for (let y = 0; y < height; y += 1) {
+      output[y * width + x] = total / (radius * 2 + 1);
+      total += sampleCoverage(horizontal, width, height, x, y + radius + 1) - sampleCoverage(horizontal, width, height, x, y - radius);
+    }
+  }
+  return output;
+}
+
+function preprocessDiffusionField(
+  field: Float32Array,
+  width: number,
+  height: number,
+  settings: HalftoneSettings,
+  channelIndex: number,
+) {
+  const datamoshed = buildGlitchField(field, width, height, {
+    ...settings,
+    sliceShift: 0,
+    verticalSliceShift: 0,
+    gridWarp: 0,
+  }, channelIndex);
+  const denoise = clamp(settings.diffusionDenoise ?? 0, -1, 1);
+  const filtered = datamoshed.slice();
+  if (denoise > 0) {
+    const radius = Math.max(1, Math.round(1 + denoise * 2));
+    const blurred = boxBlurField(datamoshed, width, height, radius);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = y * width + x;
+        const center = datamoshed[index];
+        const average = blurred[index];
+        const edgeWeight = clamp(1 - Math.abs(center - average) * 4);
+        filtered[index] = clamp(center + (average - center) * denoise * edgeWeight);
+      }
+    }
+  } else if (denoise < 0) {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = y * width + x;
+        filtered[index] = clamp(datamoshed[index] + deterministicNoise(x, y, channelIndex) * -denoise * 0.18);
+      }
+    }
+  }
+
+  const strength = clamp(settings.diffusionSharpenStrength ?? 0);
+  if (strength <= 0) return filtered;
+  const radius = Math.max(1, Math.round(settings.diffusionSharpenRadius ?? 1));
+  const blurred = boxBlurField(filtered, width, height, radius);
+  const sharpened = filtered.slice();
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      sharpened[index] = clamp(filtered[index] + (filtered[index] - blurred[index]) * strength);
+    }
+  }
+  return sharpened;
+}
+
+export function buildDiffusionField(
   pixels: ImageData,
   plate: Exclude<Plate, "composite">,
   settings: HalftoneSettings,
 ) {
-  const result = new Float32Array(pixels.width * pixels.height);
+  const base = new Float32Array(pixels.width * pixels.height);
+  for (let y = 0; y < pixels.height; y += 1) {
+    for (let x = 0; x < pixels.width; x += 1) {
+      const index = (y * pixels.width + x) * 4;
+      base[y * pixels.width + x] = coverageFor(plate, pixels.data[index], pixels.data[index + 1], pixels.data[index + 2], settings);
+    }
+  }
+  const source = preprocessDiffusionField(base, pixels.width, pixels.height, settings, PLATES.indexOf(plate));
+  const result = new Float32Array(source.length);
   const kernels: Record<string, Array<[number, number, number]>> = {
     "floyd-steinberg": [[0, 1, 7 / 16], [1, -1, 3 / 16], [1, 0, 5 / 16], [1, 1, 1 / 16]],
     "jarvis-judice-ninke": [[0, 1, 7 / 48], [0, 2, 5 / 48], [1, -2, 3 / 48], [1, -1, 5 / 48], [1, 0, 7 / 48], [1, 1, 5 / 48], [1, 2, 3 / 48], [2, -2, 1 / 48], [2, -1, 3 / 48], [2, 0, 5 / 48], [2, 1, 3 / 48], [2, 2, 1 / 48]],
@@ -375,15 +445,16 @@ function buildDiffusionField(
     burkes: [[0, 1, 8 / 32], [0, 2, 4 / 32], [1, -2, 4 / 32], [1, -1, 8 / 32], [1, 0, 4 / 32], [1, 1, 2 / 32], [1, 2, 2 / 32]],
     atkinson: [[0, 1, 1 / 8], [0, 2, 1 / 8], [1, -1, 1 / 8], [1, 0, 1 / 8], [1, 1, 1 / 8], [2, 0, 1 / 8]],
   };
-  const kernel = kernels[settings.diffusionAlgorithm ?? "floyd-steinberg"] ?? kernels["floyd-steinberg"];
+  const algorithm = settings.diffusionAlgorithm ?? "floyd-steinberg";
+  const kernel = algorithm === "none" ? [] : kernels[algorithm] ?? kernels["floyd-steinberg"];
   const levels = Math.max(2, Math.round(settings.diffusionLevels ?? 8));
   const intensity = clamp(settings.diffusionIntensity ?? 0.5);
   for (let y = 0; y < pixels.height; y += 1) {
     const reverse = y % 2 === 1;
     for (let step = 0; step < pixels.width; step += 1) {
       const x = reverse ? pixels.width - 1 - step : step;
-      const index = (y * pixels.width + x) * 4;
-      let value = coverageFor(plate, pixels.data[index], pixels.data[index + 1], pixels.data[index + 2], settings);
+      const fieldIndex = y * pixels.width + x;
+      let value = source[fieldIndex];
       value += diffusionOffset(x, y, settings.diffusionModulation, (settings.diffusionModStrength ?? 0.5) * 0.25);
       if ((settings.directionalBias ?? 0) > 0) {
         const angle = ((settings.directionalBiasAngle ?? 0) * Math.PI) / 180;
@@ -391,11 +462,11 @@ function buildDiffusionField(
       }
       if ((settings.brokenKernel ?? 0) > 0) value += (((x * 7 + y * 11) % 5) - 2) * (settings.brokenKernel ?? 0) * 0.03;
       if ((settings.errorOverflow ?? 0) > 0 && (x + y) % 9 === 0) value += (settings.errorOverflow ?? 0) * 0.12;
-      if ((settings.diffusionReset ?? 0) > 0 && y % Math.max(2, Math.round(24 - (settings.diffusionReset ?? 0) * 20)) === 0) value = coverageFor(plate, pixels.data[index], pixels.data[index + 1], pixels.data[index + 2], settings);
+      if ((settings.diffusionReset ?? 0) > 0 && y % Math.max(2, Math.round(24 - (settings.diffusionReset ?? 0) * 20)) === 0) value = source[fieldIndex];
       if ((settings.crossChannelBleed ?? 0) > 0) value += (settings.crossChannelBleed ?? 0) * 0.02;
-      value = clamp(value + (result[y * pixels.width + x] || 0));
+      value = clamp(value + (result[fieldIndex] || 0));
       const quantized = Math.round(value * (levels - 1)) / (levels - 1);
-      result[y * pixels.width + x] = quantized;
+      result[fieldIndex] = quantized;
       const error = (value - quantized) * intensity;
       for (const [dy, rawDx, weight] of kernel) {
         const dx = reverse ? -rawDx : rawDx;
@@ -425,7 +496,7 @@ function renderDiffusionPlate(
   const pixelWidth = width / pixels.width;
   const pixelHeight = height / pixels.height;
   context.save();
-  context.globalAlpha = 1;
+  context.globalAlpha = clamp(settings.opacity);
   context.globalCompositeOperation = monochrome ? "source-over" : "multiply";
   context.fillStyle = monochrome ? "#111214" : meta.color;
   for (let y = 0; y < pixels.height; y += 1) {
@@ -552,13 +623,14 @@ function drawRegistration(
   weight = 1,
   registrationShape?: CustomShapeAsset,
   mode: "corners" | "centered" = "corners",
+  cacheStamp = true,
 ) {
   context.save();
   context.globalCompositeOperation = "source-over";
   context.globalAlpha = 0.7;
   context.strokeStyle = "#121416";
   context.lineWidth = Math.max(0.5, weight);
-  const customMark = registrationShape ? customShapeStamp(registrationShape, "#121416", size * 2) : null;
+  const customMark = registrationShape ? customShapeStamp(registrationShape, "#121416", size * 2, { cache: cacheStamp }) : null;
 
   const points = mode === "centered"
     ? [[width / 2, offset], [width / 2, height - offset]]
@@ -577,6 +649,7 @@ function drawRegistration(
     context.stroke();
   }
   context.restore();
+  if (customMark && !cacheStamp) customMark.width = customMark.height = 0;
 }
 
 function renderPlateDots(
@@ -591,6 +664,7 @@ function renderPlateDots(
   scale: number,
   minimumCellSize: number,
   monochrome: boolean,
+  cacheStamp = true,
 ) {
   if (!settings.visible[plate] || (settings.grayscale && plate !== "black")) return;
 
@@ -612,12 +686,12 @@ function renderPlateDots(
   const centerX = width / 2;
   const centerY = height / 2;
   const stamp = settings.dotShape === "custom" && settings.customShape
-    ? customShapeStamp(settings.customShape, monochrome ? "#111214" : meta.color, cell * 1.04)
+    ? customShapeStamp(settings.customShape, monochrome ? "#111214" : meta.color, cell * 1.04, { cache: cacheStamp })
     : null;
 
   context.save();
   context.fillStyle = monochrome ? "#111214" : meta.color;
-  context.globalAlpha = 1;
+  context.globalAlpha = clamp(settings.opacity);
   context.globalCompositeOperation = monochrome ? "source-over" : "multiply";
 
   for (let u = -half; u <= half; u += cell) {
@@ -643,6 +717,7 @@ function renderPlateDots(
   }
 
   context.restore();
+  if (stamp && !cacheStamp) stamp.width = stamp.height = 0;
 }
 
 function getDocumentTargetDimensions(
@@ -745,12 +820,14 @@ export function renderHalftone(
 
   target.width = width;
   target.height = height;
-  const context = target.getContext("2d", { alpha: false });
+  const context = target.getContext("2d", { alpha: options.transparent ?? false });
   if (!context) return;
 
-  context.fillStyle = options.paper ?? "#eeeae0";
-  context.fillRect(0, 0, width, height);
-  if ((options.paper ?? "").toLowerCase() === "#000000" || (options.paper ?? "").toLowerCase() === "#111214") {
+  if (!options.transparent) {
+    context.fillStyle = options.paper ?? "#eeeae0";
+    context.fillRect(0, 0, width, height);
+  }
+  if (!options.transparent && ((options.paper ?? "").toLowerCase() === "#000000" || (options.paper ?? "").toLowerCase() === "#111214")) {
     context.fillStyle = "#ffffff";
     if (documentDimensions && options.document) {
       const placement = calculateArtworkPlacement({
@@ -774,6 +851,7 @@ export function renderHalftone(
   }
 
   const sampleCanvas = document.createElement("canvas");
+  try {
   const sampleScale = options.preview
     ? Math.min(1, 1100 / Math.max(width, height))
     : 1;
@@ -820,14 +898,23 @@ export function renderHalftone(
   const activePlates = plate === "composite" ? processPlates(settings) : [plate];
   for (const activePlate of activePlates) {
     const monochrome = Boolean(settings.grayscale || (options.monochromePlate && plate !== "composite"));
+    const needsOpacityLayer = clamp(settings.opacity) < 1;
+    const plateCanvas = needsOpacityLayer ? document.createElement("canvas") : target;
+    if (needsOpacityLayer) {
+      plateCanvas.width = width;
+      plateCanvas.height = height;
+    }
+    const plateContext = needsOpacityLayer ? plateCanvas.getContext("2d") : context;
+    if (!plateContext) continue;
+    const opaqueSettings = needsOpacityLayer ? { ...settings, opacity: 1 } : settings;
     if (settings.diffusionEnabled) {
-      renderDiffusionPlate(context, pixels, activePlate, settings, width, height, monochrome);
+      renderDiffusionPlate(plateContext, pixels, activePlate, opaqueSettings, width, height, monochrome);
     } else {
       renderPlateDots(
-        context,
+        plateContext,
         pixels,
         activePlate,
-        settings,
+        opaqueSettings,
         width,
         height,
         sampleCanvas.width,
@@ -835,11 +922,23 @@ export function renderHalftone(
         renderScale,
         minimumCellSize,
         monochrome,
+        options.cacheCustomStamps ?? true,
       );
+    }
+    if (needsOpacityLayer) {
+      context.save();
+      context.globalAlpha = clamp(settings.opacity);
+      context.globalCompositeOperation = monochrome ? "source-over" : "multiply";
+      context.drawImage(plateCanvas, 0, 0);
+      context.restore();
+      plateCanvas.width = plateCanvas.height = 0;
     }
   }
 
-  if (options.registration) drawRegistration(context, width, height, options.registrationSize, options.registrationOffset, options.registrationWeight, options.registrationShape, options.registrationMode);
+  if (options.registration) drawRegistration(context, width, height, options.registrationSize, options.registrationOffset, options.registrationWeight, options.registrationShape, options.registrationMode, options.cacheCustomStamps ?? true);
+  } finally {
+    sampleCanvas.width = sampleCanvas.height = 0;
+  }
 }
 
 export function renderPlateSvg(
@@ -891,7 +990,7 @@ export function renderPlateSvg(
           if (field[y * sw + x] < 0.5) { x++; continue; }
           const from = x++;
           while (x < sw && field[y * sw + x] >= 0.5) x++;
-          if (shapes.length >= MAX_EXPORT_GRID_POINTS) throw new Error("SVG export exceeds the vector mark limit.");
+          if (shapes.length >= MAX_DIFFUSION_SVG_RUNS) throw new Error("SVG export exceeds the diffusion run limit.");
           shapes.push(`<rect x="${from * pw}" y="${y * ph}" width="${(x - from) * pw + 0.25}" height="${ph + 0.25}"/>`);
         }
       }
@@ -941,7 +1040,7 @@ export function renderPlateSvg(
       registration = `<g fill="none" stroke="#000000" stroke-width="${Math.max(0.5, options.registrationWeight ?? 1)}">${marks}</g>`;
     }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${(width / DOCUMENT_DPI).toFixed(4)}in" height="${(height / DOCUMENT_DPI).toFixed(4)}in" viewBox="0 0 ${width} ${height}"><defs>${definitions.join("")}</defs><g fill="#000000" stroke="none">${shapes.join("")}</g>${registration}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${(width / DOCUMENT_DPI).toFixed(4)}in" height="${(height / DOCUMENT_DPI).toFixed(4)}in" viewBox="0 0 ${width} ${height}"><defs>${definitions.join("")}</defs><g fill="#000000" stroke="none" opacity="${clamp(settings.opacity)}">${shapes.join("")}</g>${registration}</svg>`;
 }
 
 function svgSymbol(asset: CustomShapeAsset, id: string) {

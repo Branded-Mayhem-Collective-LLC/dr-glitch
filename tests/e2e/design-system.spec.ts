@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { activateTool, openFreshStudio } from "./helpers/workstation";
 
 /**
  * Design-system gate for docs/specs/2026-07-27-drglitch-ui-system-design.md.
@@ -309,8 +310,9 @@ async function auditStylesheetSource(
 
 test.describe("DR.GLITCH design system", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    // "/" now lands on the home surface; the studio design law is audited
+    // against the opened sample project (same entry as the workspace suites).
+    await openFreshStudio(page);
   });
 
   test("no element uses a banned hue", async ({ page }) => {
@@ -353,9 +355,13 @@ test.describe("DR.GLITCH design system", () => {
     page,
   }) => {
     const offenders: string[] = [];
-    for (const route of ["/", "/landing", "/login", "/signup"]) {
+    // The studio itself was opened by beforeEach (sample project); audit it
+    // first, then the standalone marketing/auth routes.
+    offenders.push(
+      ...(await auditComputedPaint(page)).map((entry) => `studio ${entry}`),
+    );
+    for (const route of ["/landing", "/login", "/signup"]) {
       await page.goto(route);
-      if (route === "/") await page.waitForSelector('[data-testid="artwork-canvas"]');
       const routeOffenders = await auditComputedPaint(page);
       offenders.push(...routeOffenders.map((entry) => `${route} ${entry}`));
     }
@@ -424,7 +430,7 @@ test.describe("DR.GLITCH design system", () => {
         }
       }
     }
-    await page.getByTestId("stage-halftone-cmyk").click();
+    await activateTool(page, "plates");
     const dials = page.locator(".ink-chip-dial");
     await expect(dials).toHaveCount(4);
     for (const dial of await dials.all()) {
@@ -609,43 +615,60 @@ test.describe("DR.GLITCH design system", () => {
 });
 
 test.describe("accessibility floor and mobile", () => {
-  test("mobile guard removes the studio from visual, keyboard, and accessibility navigation", async ({
+  // The old full-page "desktop-only" guard is contractually replaced by the
+  // ws-size-gate: below 1280×800 only the EDITOR AREA is swapped for the
+  // notice — the topbar stays available and state is preserved.
+  test("editor is available at 1280x800 and gated below either minimum", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openFreshStudio(page);
+    await expect(page.getByTestId("artwork-canvas")).toBeVisible();
+    await expect(page.getByTestId("ws-size-gate")).toBeHidden();
+
+    await page.setViewportSize({ width: 1279, height: 800 });
+    await expect(page.getByTestId("ws-size-gate")).toBeVisible();
+    await expect(page.getByTestId("artwork-canvas")).toBeHidden();
+    await page.setViewportSize({ width: 1280, height: 799 });
+    await expect(page.getByTestId("ws-size-gate")).toBeVisible();
+  });
+
+  test("size gate removes the editor from visual, keyboard, and accessibility navigation", async ({
     page,
   }) => {
+    await openFreshStudio(page);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/");
-    const guard = page.getByTestId("desktop-only");
+    const guard = page.getByTestId("ws-size-gate");
     await expect(guard).toBeVisible();
 
     const underlying = page.locator(
-      ".studio-shell > :not(.desktop-only) button, " +
-        ".studio-shell > :not(.desktop-only) input, " +
-        ".studio-shell > :not(.desktop-only) select, " +
-        ".studio-shell > :not(.desktop-only) a[href], " +
-        ".studio-shell > :not(.desktop-only) [tabindex]",
+      ".ws-main > :not(.ws-size-gate) button, " +
+        ".ws-main > :not(.ws-size-gate) input, " +
+        ".ws-main > :not(.ws-size-gate) select, " +
+        ".ws-main > :not(.ws-size-gate) a[href], " +
+        ".ws-main > :not(.ws-size-gate) [tabindex]",
     );
     expect(await underlying.count()).toBeGreaterThan(0);
     for (const control of await underlying.all()) {
       await expect(control).toBeHidden();
     }
 
-    await page.keyboard.press("Tab");
-    const focusEscaped = await page.evaluate(() => {
-      const active = document.activeElement;
-      const guardElement = document.querySelector("[data-testid='desktop-only']");
-      return Boolean(
-        active &&
-          active !== document.body &&
-          active !== document.documentElement &&
-          !guardElement?.contains(active),
-      );
-    });
-    expect(focusEscaped).toBe(false);
+    // The topbar deliberately stays operable (workspace contract §1.1), but
+    // keyboard focus must never land inside the display:none editor regions.
+    for (let step = 0; step < 25; step += 1) {
+      await page.keyboard.press("Tab");
+      const focusInHiddenEditor = await page.evaluate(() => {
+        const active = document.activeElement;
+        const main = document.querySelector(".ws-main");
+        const gate = document.querySelector("[data-testid='ws-size-gate']");
+        return Boolean(
+          active && main?.contains(active) && !gate?.contains(active),
+        );
+      });
+      expect(focusInHiddenEditor).toBe(false);
+    }
   });
 
   test("yellow never carries text", async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     const violations = await page.evaluate(() => {
       const out: string[] = [];
       for (const el of Array.from(document.querySelectorAll("*"))) {
@@ -669,8 +692,7 @@ test.describe("accessibility floor and mobile", () => {
     // !important. Without it, the wordmark would keep glitching for users
     // who asked it not to. This test pins that cascade.
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto("/");
-    await page.waitForSelector('[data-testid="artwork-canvas"]');
+    await openFreshStudio(page);
     const state = await page.evaluate(() => {
       const el = document.querySelector(
         ".brand-lockup strong",
@@ -691,12 +713,12 @@ test.describe("accessibility floor and mobile", () => {
     expect(state!.after).toBe("none");
   });
 
-  for (const route of ["/", "/landing", "/login", "/signup"]) {
+  for (const route of ["studio", "/landing", "/login", "/signup"]) {
     test(`${route} gives every visible enabled interactive control a visible focus indicator`, async ({
       page,
     }) => {
-      await page.goto(route);
-      if (route === "/") await page.waitForSelector('[data-testid="artwork-canvas"]');
+      if (route === "studio") await openFreshStudio(page);
+      else await page.goto(route);
 
       const controls = page.locator(
         "button, input:not([type='hidden']), select, textarea, a[href], " +

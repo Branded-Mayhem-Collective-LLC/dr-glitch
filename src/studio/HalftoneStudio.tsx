@@ -1,42 +1,39 @@
 "use client";
 
-import {
-  AlertTriangle,
-  Check,
-  ChevronDown,
-  ClipboardCheck,
-  Copy,
-  Download,
-  FileImage,
-  FolderOpen,
-  HelpCircle,
-  ImagePlus,
-  Layers3,
-  MonitorUp,
-  PanelLeftClose,
-  PanelLeftOpen,
-  RotateCcw,
-  Sparkles,
-  Upload,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
-import JSZip from "jszip";
-import SessionBadge from "../auth/SessionBadge";
-import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../brand";
-import ProcessLoader from "../components/ProcessLoader";
-import InkRail from "./InkRail";
+/**
+ * HalftoneStudio — the studio state owner for one OPEN project.
+ *
+ * Document truth lives in the project store (ProjectCoreV1 via ProjectStore /
+ * DocumentApi); this component projects it onto the legacy single-artwork
+ * render shapes (HalftoneSettings / DocumentSettings) so the existing render
+ * path stays byte-identical for a one-layer project.
+ *
+ * RENDER ROUTING (editor-UI wave): the canvas renders through TWO paths,
+ * chosen per frame by legacyEngineEligible (src/export/current-engine):
+ * - A project in the exact legacy single-layer shape (one visible
+ *   halftone/diffusion layer, uncropped, identity transform, full-artboard
+ *   source) keeps the ORIGINAL renderHalftone path — pixel-identical to the
+ *   pre-workstation studio and to the render-regression oracle.
+ * - Everything else (multi-layer stacks, clean mode, moved/cropped/warped
+ *   layers, empty projects) renders through PreviewService: draft jobs at
+ *   draftScaleFor scale on every change, the exact viewport job ~180ms
+ *   after the last change, via the preview worker (MainThreadRenderer
+ *   fallback outside worker-capable engines). Frames draw through
+ *   preview-presenter; registration marks are the final main-thread pass.
+ */
+
+import { Check, Sparkles, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
+import { useNavigate } from "react-router";
+import { PRODUCT_NAME } from "../brand";
 import CustomShapeDialog from "./CustomShapeDialog";
 import { importCustomShape, prepareCustomShape } from "./custom-shape";
 import type { CustomShapeAsset } from "./custom-shape-data";
 import { CHROME_INK, COMPOSITE_INK } from "./inks";
-import NumericField from "./NumericField";
-import StageSpine, { type Stage } from "./StageSpine";
-import { isInteractiveTarget, useStudioKeys } from "./useStudioKeys";
+import { isInteractiveTarget } from "./useStudioKeys";
+import { isModalOpen } from "../workspace/shortcuts";
 import {
   MAX_EXPORT_GRID_POINTS,
-  createDemoArtwork,
+  MAX_DIFFUSION_RASTER_PIXELS,
   estimateGridPoints,
   HalftoneSettings,
   PLATE_META,
@@ -44,7 +41,6 @@ import {
   processPlates,
   Plate,
   renderHalftone,
-  renderPlateSvg,
 } from "./halftone";
 import {
   DEFAULT_DOCUMENT_SETTINGS,
@@ -53,15 +49,12 @@ import {
   getFitScalePercent,
   getSheetPixelDimensions,
   SHEET_SIZES,
-  type SheetSizeId,
 } from "./document-model";
-import { withPngDpi } from "./png-dpi";
-import { validateImageDimensions, validateImageFile, validateImageSignature } from "./image-file";
+import { ArtworkIntakeError, validateArtworkFile } from "./image-file";
 import {
   ChangeEvent,
   CSSProperties,
   DragEvent,
-  ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -69,124 +62,485 @@ import {
   useState,
 } from "react";
 
-import { DEFAULT_SETTINGS, DIFFUSION_DEFAULTS, GLITCH_DEFAULTS } from "./settings-defaults";
+import { DEFAULT_SETTINGS } from "./settings-defaults";
+import { WorkspaceShell } from "../workspace/WorkspaceShell";
+import {
+  StudioApiContext,
+  type ExportPipeline,
+  type ProcessPlate,
+  type StudioApi,
+  type UnitDisplay,
+} from "../workspace/studio-api";
+import { ProjectUiContext, type ProjectUi } from "../workspace/project-ui";
+import "../workspace/workstation-ui.css";
+import { TextPromptDialog, ChoiceDialog } from "../workspace/dialogs";
+import { DirtyWorkDialog } from "../home/DirtyWorkDialog";
+import type { DirtyGuardChoice } from "../home/dirty-guard";
+/* Direct module imports (not the src/app index) keep the StudioGate ->
+ * HalftoneStudio -> app dependency acyclic. */
+import {
+  commandsForDocumentPatch,
+  commandsForSetting,
+  documentFromCore,
+  halftoneSettingsFromCore,
+  resetDiffusionCommands,
+  resetGlitchCommands,
+  resetHalftoneCommands,
+  resetOutputCommands,
+} from "../app/legacy-bridge";
+import { AssetCache } from "../app/asset-cache";
+import {
+  artworkIntakeCommands,
+  layerCapError,
+  type ArtworkIntakeIntent,
+} from "../app/artwork-intake";
+import { ensureLive } from "../app/lifecycle";
+import { probeEnvironmentCapabilities } from "../app/capabilities";
+import {
+  PreviewService,
+  previewPaper,
+  previewPlates,
+  type PreviewFrame,
+} from "../app/preview-service";
+import { createPreviewWorker, WorkerRenderPort } from "../app/worker-port";
+import { discardPayload, MainThreadRenderer } from "../render";
+import { legacyProofEligible } from "../export/current-engine";
+import { composeTransformPatch } from "../workspace/canvas/transform-compose";
+import { EditingSurface } from "../workspace/canvas/EditingSurface";
+import { ArtboardOverlays } from "../workspace/canvas/ArtboardOverlays";
+import {
+  presentPreviewFrame,
+  type PresenterContext,
+  type PresenterLayerShape,
+} from "../workspace/canvas/preview-presenter";
+import { startAppSpan } from "../telemetry/sentry";
+import { loadImageBlob } from "../io/image-load";
+import { customShapeStamp } from "./custom-shape";
+import type { EditorMode } from "../workspace/project-ui";
+/* Real export pipeline (addendum: UI exports go through the orchestrator). */
+import {
+  createWarningGate,
+  deliverStudioExport,
+  loadAssetInfos,
+  preflightForTarget,
+  registerExportSuspendable,
+  startStudioExport,
+} from "../app/export-flow";
+import { createRegistrationPainter, createStudioRenderService } from "../app/studio-export";
+import { createExportSessionStore, type ExportSessionStore } from "../export/export-session";
+import { BROWSER_EXPORT_ENCODERS, downloadExportBlob } from "../export/encoders";
+import { ExportCancelledError, type RenderService } from "../export/orchestrator";
+import { vectorPlateEligibility, type AssetInfo } from "../export/preflight";
+import type { ExportTarget } from "../export/targets";
+import { useAppSession, useSessionSnapshot } from "../app/app-context";
+import {
+  createLayerFromAsset,
+  createPresetFromLayer,
+  parsePreset,
+  applyPresetCommand,
+  useProjectStore,
+  type Command,
+} from "../project";
+import { RESOURCE_POLICY } from "../core/resource-policy";
+import { createId } from "../core/id";
+import { ConflictError } from "../storage";
+import type { Id, RecipePresetV1 } from "../core/types";
 
-const CMYK_PRESETS = [
-  { id: "preset-1", label: "Preset 1 · C15 M75 Y0 K45", angles: { cyan: 15, magenta: 75, yellow: 0, black: 45 } },
-  { id: "preset-2", label: "Preset 2 · C105 M75 Y90 K15", angles: { cyan: 105, magenta: 75, yellow: 90, black: 15 } },
-  { id: "preset-3", label: "Preset 3 · C15 M45 Y0 K75", angles: { cyan: 15, magenta: 45, yellow: 0, black: 75 } },
-  { id: "preset-4", label: "Preset 4 · C165 M45 Y90 K105", angles: { cyan: 165, magenta: 45, yellow: 90, black: 105 } },
-] as const;
+const ZOOM_BOUNDS = { min: 35, max: 110, fit: 76 } as const;
 
-const STAGE_DEFINITIONS = [
-  {
-    id: "artwork",
-    number: "01",
-    label: "Artboard",
-    description: "Confirm the source file before building the screen.",
-  },
-  {
-    id: "halftone-cmyk",
-    number: "02",
-    label: "Halftone / CMYK",
-    description: "Build the dot pattern, screen angles, and plate mix.",
-  },
-  {
-    id: "diffusion",
-    number: "03",
-    label: "Diffusion",
-    description: "Shape ink distribution with diffusion and glitch controls.",
-  },
-  {
-    id: "glitch",
-    number: "04",
-    label: "Glitch",
-    description: "Slice, warp, smear, corrupt, and sort the source field.",
-  },
-  {
-    id: "output",
-    number: "05",
-    label: "Output / Registration",
-    description: "Finish the plate package and press handoff.",
-  },
-] as const;
+type GuardedAction = "new" | "home";
 
-type StudioStageId = (typeof STAGE_DEFINITIONS)[number]["id"];
+/** Cheap viewBox/width parse for stored-SVG asset dimensions. */
+function svgDimensions(svg: string): { width: number; height: number } {
+  const viewBox = /viewBox\s*=\s*"([^"]+)"/i.exec(svg)?.[1]?.trim().split(/[\s,]+/);
+  if (viewBox?.length === 4) {
+    const width = Number(viewBox[2]);
+    const height = Number(viewBox[3]);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return { width: Math.round(width), height: Math.round(height) };
+    }
+  }
+  return { width: 100, height: 100 };
+}
 
 export default function HalftoneStudio() {
-  const artworkLoadRef = useRef(0);
-  const artworkUrlRef = useRef<string | undefined>(undefined);
-  const artworkImageRef = useRef<HTMLImageElement | undefined>(undefined);
-  const registrationLoadRef = useRef(0);
-  const [source, setSource] = useState<HTMLImageElement | HTMLCanvasElement | null>(
-    null,
+  const controller = useAppSession();
+  const snapshot = useSessionSnapshot();
+  const navigate = useNavigate();
+  if (!snapshot.open) throw new Error("HalftoneStudio requires an open project");
+  const open = snapshot.open;
+  const { store, doc } = open;
+  const projectState = useProjectStore(store);
+  const core = projectState.envelope.core;
+  const layers = core.layers;
+
+  /* ----- asset cache (session-scoped, StrictMode-safe) -----
+   * The effect below owns the cache lifetime: cleanup disposes it, and a
+   * setup re-run after cleanup (StrictMode runs setup → cleanup → setup on
+   * one mounted instance with refs preserved) constructs a FRESH cache and
+   * re-renders so render-scope consumers rebind. Reading through ensureLive
+   * everywhere means no code path can hold a permanently disposed cache. */
+  const cacheRef = useRef<AssetCache | null>(null);
+  const cache = ensureLive(cacheRef, () => new AssetCache(controller.assets));
+  const [cacheTick, setCacheTick] = useState(0);
+  useEffect(() => {
+    const previous = cacheRef.current;
+    const live = ensureLive(cacheRef, () => new AssetCache(controller.assets));
+    if (live !== previous) setCacheTick((tick) => tick + 1);
+    const unsubscribe = live.subscribe(() => setCacheTick((tick) => tick + 1));
+    // Export suspension (decode-cache co-residency): the cache's raster
+    // decode cache evicts for the duration of every export and refills
+    // lazily after — registered on the flow-level registry so the export
+    // pipeline needs no component plumbing.
+    const unregister = registerExportSuspendable({
+      suspendForExport: () => live.suspendRasters(),
+      resumeAfterExport: () => live.resumeRasters(),
+    });
+    return () => {
+      unregister();
+      unsubscribe();
+      live.dispose();
+    };
+  }, [controller.assets]);
+
+  /* ----- session-only selection (never in undo history) ----- */
+  const [selection, setSelection] = useState<Id[]>([]);
+  const selectedLayerIds = useMemo(
+    () => selection.filter((id) => layers.some((layer) => layer.id === id)),
+    [selection, layers],
   );
-  const [sourceName, setSourceName] = useState(`${PRODUCT_NAME} sample artwork`);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [documentSettings, setDocumentSettings] = useState<DocumentSettings>(
-    () => ({ ...DEFAULT_DOCUMENT_SETTINGS }),
+  const primaryLayerId =
+    selectedLayerIds[selectedLayerIds.length - 1] ?? layers[layers.length - 1]?.id ?? null;
+  const primaryLayer = layers.find((layer) => layer.id === primaryLayerId) ?? null;
+
+  /* ----- legacy projections ----- */
+  const customShape =
+    primaryLayer?.recipe.halftone.customShapeAssetId != null
+      ? cache.getCustomShape(primaryLayer.recipe.halftone.customShapeAssetId) ?? undefined
+      : undefined;
+  const registrationShape =
+    core.registration.customShapeAssetId != null
+      ? cache.getCustomShape(core.registration.customShapeAssetId) ?? undefined
+      : undefined;
+
+  const settings = useMemo<HalftoneSettings>(() => {
+    if (!primaryLayer) {
+      return {
+        ...DEFAULT_SETTINGS,
+        grayscale: core.separation.mode === "grayscale",
+        angles: { ...core.separation.angles },
+        visible: { ...core.separation.visible },
+      };
+    }
+    const mapped = halftoneSettingsFromCore(core, primaryLayer, customShape);
+    // UI truth: glitch parameter values stay visible even while no glitch
+    // amount is live (enabled=false renders identically because amounts are 0).
+    const glitch = primaryLayer.recipe.glitch;
+    return {
+      ...mapped,
+      sliceShift: glitch.sliceShift,
+      sliceSize: glitch.sliceSize,
+      verticalSliceShift: glitch.verticalSliceShift,
+      verticalSliceSize: glitch.verticalSliceSize,
+      gridWarp: glitch.gridWarp,
+      warpScale: glitch.warpScale,
+      smearDrag: glitch.smearDrag,
+      smearLength: glitch.smearLength,
+      smearVertical: glitch.smearVertical,
+      macroblockCorrupt: glitch.macroblockCorrupt,
+      macroblockDropout: glitch.macroblockDropout,
+      blockShift: glitch.blockShift,
+      blockShiftSize: glitch.blockShiftSize,
+      channelDesync: glitch.channelDesync,
+      bitmapSort: glitch.bitmapSort,
+      bitmapSortVertical: glitch.bitmapSortVertical,
+    };
+  }, [core, primaryLayer, customShape]);
+
+  const documentSettings = useMemo<DocumentSettings>(
+    () => documentFromCore(core, primaryLayer),
+    [core, primaryLayer],
   );
+
+  // Widened to the StudioApi source type: future render binding may hand the
+  // canvas a staged HTMLCanvasElement instead of the decoded image.
+  const source = (primaryLayer ? cache.getImage(primaryLayer.assetId) : null) as
+    | HTMLImageElement
+    | HTMLCanvasElement
+    | null;
+  const sourceName = primaryLayer?.name ?? "No artwork";
+
+  const registration = core.output.registrationOnPlates;
+  /* Proof registration overlay: SESSION-ONLY (never persisted to core,
+   * never exported, never in undo history). null = follow the document's
+   * plate-package default so the proof previews what plates will carry;
+   * an explicit Proof-drawer toggle overrides for this session only. */
+  const [proofOverlayOverride, setProofOverlayOverride] = useState<boolean | null>(null);
+  const proofRegistration = proofOverlayOverride ?? registration;
+  const registrationSize = core.registration.size ?? 120;
+  const registrationOffset = core.registration.offset ?? 120;
+  const registrationWeight = core.registration.weight;
+  const registrationMode = core.registration.mode;
+
+  /* ----- session view state ----- */
   const [selectedPlate, setActivePlate] = useState<Plate>("composite");
-  const activePlate = settings.grayscale && selectedPlate !== "composite" ? "black" : selectedPlate;
+  const activePlate =
+    settings.grayscale && selectedPlate !== "composite" ? "black" : selectedPlate;
   const applicablePlates = useMemo(() => processPlates(settings), [settings]);
-  const [zoom, setZoom] = useState(76);
+  const [zoom, setZoom] = useState<number>(ZOOM_BOUNDS.fit);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
-  const [activeStage, setActiveStage] = useState<StudioStageId>("artwork");
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
-  const [registration, setRegistration] = useState(true);
-  const [registrationSize, setRegistrationSize] = useState(120);
-  const [registrationOffset, setRegistrationOffset] = useState(120);
-  const [registrationWeight, setRegistrationWeight] = useState(2);
-  const [registrationShape, setRegistrationShape] = useState<CustomShapeAsset>();
-  const [registrationMode, setRegistrationMode] = useState<"corners" | "centered">("corners");
-
-  useEffect(() => () => {
-    artworkLoadRef.current++;
-    registrationLoadRef.current++;
-    if (artworkImageRef.current) {
-      artworkImageRef.current.onload = artworkImageRef.current.onerror = null;
-      artworkImageRef.current.src = "";
-    }
-    if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
-  }, []);
   const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [customShapeOpen, setCustomShapeOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const patternPreviewRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const registrationFileRef = useRef<HTMLInputElement>(null);
   const renderFrame = useRef<number | null>(null);
-  const panStart = useRef<{
-    x: number;
-    y: number;
-    panX: number;
-    panY: number;
-  } | null>(null);
+  const artworkLoadRef = useRef(0);
+  const artworkAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    artworkLoadRef.current += 1;
+    artworkAbortRef.current?.abort();
+  }, []);
+  const registrationLoadRef = useRef(0);
+  const panStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setSource(createDemoArtwork()), 0);
-    return () => window.clearTimeout(timeout);
+  /* ----- dialog state ----- */
+  const [dirtyGuard, setDirtyGuard] = useState<GuardedAction | null>(null);
+  const [saveDialog, setSaveDialog] = useState<{ continueWith: GuardedAction | null } | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+
+  /*
+   * Invocation ref for the project-flow dialogs: the control that opened the
+   * dialog (topbar New/Save, project title, …) gets focus back whenever the
+   * dialog closes without navigating away (Escape/Cancel, or a completed
+   * in-place action like Rename). Deterministic keyboard round-trips are
+   * part of the workspace-a11y contract.
+   */
+  const dialogInvokerRef = useRef<HTMLElement | null>(null);
+
+  const captureDialogInvoker = useCallback(() => {
+    dialogInvokerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
   }, []);
 
+  const restoreDialogInvoker = useCallback(() => {
+    const invoker = dialogInvokerRef.current;
+    dialogInvokerRef.current = null;
+    if (!invoker) return;
+    // Deferred one frame: the dialog must unmount (and ModalDialog must
+    // lift `inert` from the app root) before the invoker can take focus.
+    window.requestAnimationFrame(() => {
+      if (invoker.isConnected) invoker.focus();
+    });
+  }, []);
+
+  /* ----- gesture bracketing: scrub = ONE transaction; Escape cancels ----- */
+  useEffect(() => {
+    const down = () => doc.beginGesture();
+    const up = () => doc.endGesture();
+    // pointercancel is a CANCEL, not a commit: the system revoked the
+    // pointer mid-drag, so the coalesced transaction rolls back exactly
+    // like Escape instead of committing a half-finished scrub.
+    const cancel = () => {
+      if (!doc.cancelGesture()) doc.endGesture();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (doc.cancelGesture()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", cancel, true);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", cancel, true);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [doc]);
+
+  /* ----- editor-UI session state (never in undo history) ----- */
+  const [editorMode, setEditorMode] = useState<EditorMode>("transform");
+  const [rulersVisible, setRulersVisible] = useState(true);
+  const [previewFallback, setPreviewFallback] = useState(false);
+
+  const assetSizeFor = useCallback(
+    (layerId: Id): { width: number; height: number } | null => {
+      const layer = store.getEnvelope().core.layers.find((candidate) => candidate.id === layerId);
+      if (!layer) return null;
+      const image = cache.getImage(layer.assetId);
+      return image ? { width: image.naturalWidth, height: image.naturalHeight } : null;
+    },
+    [store, cache],
+  );
+
+  /* ----- render routing: any DocumentSettings-representable single-layer
+   * project proves through the ORIGINAL synchronous renderHalftone path
+   * (legacyProofEligible — the legacy studio proved EVERY single-artwork
+   * project this way, and the migrated pixel/latency specs depend on it);
+   * everything else goes through PreviewService. EXPORT routing keeps the
+   * stricter legacyEngineEligible inside createStudioRenderService. ----- */
+  // Transparent artboard backgrounds are not DocumentSettings-representable
+  // (legacy paper is always white/black): those proofs keep real alpha and
+  // always render through PreviewService.
+  const legacyEligible =
+    legacyProofEligible(core) && core.artboard.background !== "transparent";
+  const legacyEligibleRef = useRef(legacyEligible);
+  legacyEligibleRef.current = legacyEligible;
+
+  /* Presenter context for worker preview frames (rebuilt every render). */
+  const visibleLayers = useMemo(() => layers.filter((layer) => layer.visible), [layers]);
+  const presenterRef = useRef<PresenterContext | null>(null);
+  presenterRef.current = {
+    plates: previewPlates(core.separation, activePlate),
+    paper: previewPaper(core.artboard.background),
+    layerOpacities: visibleLayers.map((layer) => layer.opacity),
+    layerShapes: visibleLayers.map((layer): PresenterLayerShape => {
+      const { halftone } = layer.recipe;
+      let stamp: CanvasImageSource | undefined;
+      if (
+        layer.recipe.mode === "halftone" &&
+        halftone.dotShape === "custom" &&
+        halftone.customShapeAssetId !== null
+      ) {
+        const shape = cache.getCustomShape(halftone.customShapeAssetId);
+        if (shape) {
+          try {
+            stamp = customShapeStamp(shape, "#000000", 128);
+          } catch {
+            /* not prepared yet — the cache subscription re-renders */
+          }
+        }
+      }
+      return { dotShape: halftone.dotShape, strokeWidth: halftone.strokeWidth, stamp };
+    }),
+    registration: proofRegistration
+      ? {
+          size: registrationSize,
+          offset: registrationOffset,
+          weight: registrationWeight,
+          mode: registrationMode,
+          stamp: (() => {
+            if (!registrationShape) return null;
+            try {
+              return customShapeStamp(registrationShape, "#121416", 256);
+            } catch {
+              return null;
+            }
+          })(),
+        }
+      : null,
+  };
+
+  const handlePreviewFrame = useCallback((frame: PreviewFrame) => {
+    const canvas = canvasRef.current;
+    const presenter = presenterRef.current;
+    if (!canvas || !presenter || legacyEligibleRef.current) {
+      discardPayload(frame.payload);
+      return;
+    }
+    presentPreviewFrame(canvas, frame, presenter);
+  }, []);
+
+  const handlePreviewError = useCallback((error: { code: string; message: string }) => {
+    if (error.code === "worker-crashed") {
+      // Crash replacement exhausted: degrade to the main-thread renderer.
+      setPreviewFallback(true);
+      return;
+    }
+    setNotice(error.message);
+  }, []);
+
+  const previewServiceRef = useRef<{ service: PreviewService; fallback: boolean } | null>(null);
+  const previewSuspendableUnregisterRef = useRef<(() => void) | null>(null);
+  const getPreviewService = useCallback((): PreviewService => {
+    const current = previewServiceRef.current;
+    // isDisposed guard: under StrictMode the unmount cleanup disposes the
+    // service between two setup passes while this ref survives; a disposed
+    // service silently ignores requests, so it must be replaced, never reused.
+    if (current && !current.service.isDisposed && current.fallback === previewFallback) {
+      return current.service;
+    }
+    current?.service.dispose();
+    const env = probeEnvironmentCapabilities();
+    const useWorker = env.moduleWorkers && !previewFallback;
+    const service = new PreviewService({
+      createPort: useWorker
+        ? () => new WorkerRenderPort(createPreviewWorker)
+        : () => new MainThreadRenderer(true),
+      sources: {
+        // Resolve through the ref at call time (ensureLive) so a service
+        // never captures a cache instance that a cleanup later disposes.
+        resolveRaster: (assetId) =>
+          ensureLive(cacheRef, () => new AssetCache(controller.assets)).getRasterData(assetId),
+        resolveCustomStamp: (assetId, sizePx) =>
+          ensureLive(cacheRef, () => new AssetCache(controller.assets)).getCustomStampBitmap(
+            assetId,
+            sizePx,
+          ),
+      },
+      wantBitmap: env.createImageBitmap,
+    });
+    service.onFrame(handlePreviewFrame);
+    service.onError(handlePreviewError);
+    // Export suspension: the preview's decode/warp/proxy caches AND its
+    // worker-side draft cache evict for the duration of every export.
+    previewSuspendableUnregisterRef.current?.();
+    previewSuspendableUnregisterRef.current = registerExportSuspendable(service);
+    previewServiceRef.current = { service, fallback: previewFallback };
+    return service;
+  }, [controller.assets, previewFallback, handlePreviewFrame, handlePreviewError]);
+
+  useEffect(
+    () => () => {
+      previewSuspendableUnregisterRef.current?.();
+      previewSuspendableUnregisterRef.current = null;
+      previewServiceRef.current?.service.dispose();
+    },
+    [],
+  );
+
+  /** Output px per document px for the exact viewport job. */
+  const measureViewportScale = useCallback((): number => {
+    const width = canvasRef.current?.getBoundingClientRect().width ?? 0;
+    const { widthPx, heightPx } = store.getEnvelope().core.artboard;
+    if (width <= 0) return Math.min(1, 980 / Math.max(widthPx, heightPx));
+    const dpr = window.devicePixelRatio || 1;
+    return Math.min(1, (width * dpr) / widthPx);
+  }, [store]);
+
+  /* ----- render (unchanged legacy path; gated by legacyEligible) ----- */
   const render = useCallback(() => {
+    if (!legacyEligibleRef.current) return;
     if (!source || !canvasRef.current) return;
+    // A custom dot renders only once its SVG asset resolves from storage;
+    // the cache subscription re-renders the frame when it lands.
+    if (settings.dotShape === "custom" && !settings.customShape) return;
     const sheet = getSheetPixelDimensions(
       documentSettings.sheetSize,
       documentSettings.orientation,
     );
     const maxDimension = 980;
     const scale = Math.min(1, maxDimension / Math.max(sheet.width, sheet.height));
+    const finishPreview = startAppSpan("app.preview");
+    try {
     renderHalftone(source, canvasRef.current, settings, {
       plate: activePlate,
       width: sheet.width * scale,
       height: sheet.height * scale,
       paper: documentSettings.background === "black" ? "#111214" : "#F4F1E9",
-      registration,
+      registration: proofRegistration,
       registrationSize,
       registrationOffset,
       registrationWeight,
@@ -196,7 +550,9 @@ export default function HalftoneStudio() {
       document: documentSettings,
       preview: true,
     });
-  }, [activePlate, documentSettings, registration, registrationMode, registrationOffset, registrationShape, registrationSize, registrationWeight, settings, source]);
+    finishPreview();
+    } catch (error) { finishPreview(error); throw error; }
+  }, [activePlate, documentSettings, proofRegistration, registrationMode, registrationOffset, registrationShape, registrationSize, registrationWeight, settings, source]);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,6 +572,34 @@ export default function HalftoneStudio() {
     };
   }, [registrationShape, render, settings.dotShape, settings.customShape]);
 
+  /* ----- worker preview: draft on every change, exact viewport on idle.
+   * requestPreview submits the draft immediately and lets PreviewService
+   * follow with the exact viewport job once THAT draft frame has delivered
+   * and no newer change has arrived — during a pointer scrub each change
+   * supersedes the pending exact, so only drafts render; the last change's
+   * draft settles into exact as soon as it presents (no fixed delay). ----- */
+  useEffect(() => {
+    if (legacyEligible) return;
+    const service = getPreviewService();
+    service.pruneCaches(core);
+    service.requestPreview({
+      core,
+      view: activePlate,
+      viewportScale: measureViewportScale(),
+    });
+  }, [
+    core,
+    activePlate,
+    legacyEligible,
+    zoom,
+    cacheTick,
+    // Session-only proof overlay: marks draw in the presenter pass, so a
+    // toggle re-requests the frame even though core did not change.
+    proofRegistration,
+    getPreviewService,
+    measureViewportScale,
+  ]);
+
   useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(null), 2800);
@@ -224,54 +608,107 @@ export default function HalftoneStudio() {
 
   const sourceMeta = useMemo(() => {
     if (!source) return "No image";
-    const width =
-      source instanceof HTMLImageElement ? source.naturalWidth : source.width;
-    const height =
-      source instanceof HTMLImageElement ? source.naturalHeight : source.height;
+    const width = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
+    const height = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
     return `${width} × ${height}px · RGB`;
   }, [source]);
 
-  const updateSetting = <K extends keyof HalftoneSettings>(
-    key: K,
-    value: HalftoneSettings[K],
-  ) => setSettings((current) => ({ ...current, [key]: value }));
+  /* ----- command dispatch ----- */
 
-  const handleSolo = useCallback((plate: Plate) => {
-    if (settings.grayscale && plate !== "black" && plate !== "composite") return;
-    setActivePlate(plate);
-  }, [settings.grayscale]);
-
-  const handleCellSizeDelta = useCallback((delta: number) => {
-    setSettings((current) => ({
-      ...current,
-      cellSize: Math.min(64, Math.max(3, current.cellSize + delta)),
-    }));
+  const notifyReadOnly = useCallback(() => {
+    setNotice("This project is open read-only in this tab. Request ownership or duplicate it to edit.");
   }, []);
 
-  useStudioKeys({
-    onSolo: handleSolo,
-    onCellSizeDelta: handleCellSizeDelta,
-  });
+  const apply = useCallback(
+    (commands: Command | Command[], label?: string) => {
+      if (open.readOnly) {
+        notifyReadOnly();
+        return false;
+      }
+      return doc.apply(commands, label);
+    },
+    [doc, open.readOnly, notifyReadOnly],
+  );
 
+  const updateSetting = useCallback(
+    <K extends keyof HalftoneSettings>(key: K, value: HalftoneSettings[K]) => {
+      if (key === "customShape") return; // asset install path handles this
+      const envelope = store.getEnvelope();
+      const currentCore = envelope.core;
+      const layer =
+        currentCore.layers.find((candidate) => candidate.id === primaryLayerId) ?? null;
+      const commands = commandsForSetting(currentCore, layer, key, value);
+      if (commands.length > 0) apply(commands, String(key));
+    },
+    [apply, store, primaryLayerId],
+  );
+
+  const updateDocument = useCallback(
+    (patch: Partial<DocumentSettings>) => {
+      const envelope = store.getEnvelope();
+      const currentCore = envelope.core;
+      const layer =
+        currentCore.layers.find((candidate) => candidate.id === primaryLayerId) ?? null;
+      const commands = commandsForDocumentPatch(currentCore, layer, patch);
+      if (commands.length > 0) apply(commands, "Document");
+    },
+    [apply, store, primaryLayerId],
+  );
+
+  const handleSolo = useCallback(
+    (plate: Plate) => {
+      if (settings.grayscale && plate !== "black" && plate !== "composite") return;
+      setActivePlate(plate);
+    },
+    [settings.grayscale],
+  );
+
+  const handleToggleVisible = useCallback(
+    (plate: ProcessPlate) => {
+      apply(
+        {
+          type: "separation/set-plate-visibility",
+          plate,
+          visible: !store.getEnvelope().core.separation.visible[plate],
+        },
+        "Plate visibility",
+      );
+    },
+    [apply, store],
+  );
+
+  const handleAngleChange = useCallback(
+    (plate: ProcessPlate, angle: number) => {
+      apply({ type: "separation/set-angle", plate, angle }, "Screen angle");
+    },
+    [apply],
+  );
+
+  const setAngles = useCallback(
+    (angles: Record<ProcessPlate, number>) => {
+      updateSetting("angles", angles);
+    },
+    [updateSetting],
+  );
+
+  /* Space-drag pan arming (session-only). */
   useEffect(() => {
     function down(event: KeyboardEvent) {
       if (event.code !== "Space" || event.repeat) return;
       if (isInteractiveTarget(event.target)) return;
+      if (isModalOpen()) return; // no pan arming behind a modal dialog
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       event.preventDefault();
       setSpaceHeld(true);
     }
-
     function up(event: KeyboardEvent) {
       if (event.code === "Space") setSpaceHeld(false);
     }
-
     function reset() {
       setSpaceHeld(false);
       setPanning(false);
       panStart.current = null;
     }
-
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", reset);
@@ -282,94 +719,14 @@ export default function HalftoneStudio() {
     };
   }, []);
 
-  const handleToggleVisible = useCallback(
-    (plate: Exclude<Plate, "composite">) => {
-      setSettings((current) => ({
-        ...current,
-        visible: { ...current.visible, [plate]: !current.visible[plate] },
-      }));
-    },
-    [],
-  );
-
-  const handleAngleChange = useCallback(
-    (plate: Exclude<Plate, "composite">, angle: number) => {
-      setSettings((current) => ({
-        ...current,
-        angles: { ...current.angles, [plate]: angle },
-      }));
-    },
-    [],
-  );
-
-  useEffect(() => {
-    const canvas = patternPreviewRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    const size = 80;
-    const scale = window.devicePixelRatio || 1;
-    const frayedXEdge = Number(settings.frayedXEdge ?? 0);
-    const frayedYEdge = Number(settings.frayedYEdge ?? 0);
-    canvas.width = size * scale;
-    canvas.height = size * scale;
-    context.setTransform(scale, 0, 0, scale, 0, 0);
-    context.fillStyle = "#f4f1e9";
-    context.fillRect(0, 0, size, size);
-    const colors = ["#00a9c8", "#e53578", "#f0d422", "#202226"] as const;
-    const plates = ["cyan", "magenta", "yellow", "black"] as const;
-    for (let plateIndex = 0; plateIndex < plates.length; plateIndex += 1) {
-      const plate = plates[plateIndex];
-      if (activePlate !== "composite" && plate !== activePlate) continue;
-      if (!settings.visible[plate] || (settings.grayscale && plate !== "black")) continue;
-      const angle = (settings.angles[plate] * Math.PI) / 180;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      context.fillStyle = colors[plateIndex];
-      context.globalAlpha = settings.grayscale ? 0.82 : 0.48;
-      const cell = Math.max(5, Math.min(14, settings.cellSize * 0.72));
-      for (let u = -80; u <= 160; u += cell) {
-        for (let v = -80; v <= 160; v += cell) {
-          const x = 40 + u * cos - v * sin;
-          const y = 40 + u * sin + v * cos;
-          if (x < -4 || y < -4 || x > 84 || y > 84) continue;
-          const edgeX = Math.min(x, size - x);
-          const edgeY = Math.min(y, size - y);
-          const fray = Math.min(
-            1,
-            frayedXEdge === 0 ? 1 : edgeX / (frayedXEdge * 0.8),
-            frayedYEdge === 0 ? 1 : edgeY / (frayedYEdge * 0.8),
-          );
-          const radius = Math.max(1.5, cell * 0.32 * fray);
-          context.beginPath();
-          if (settings.dotShape === "square") context.rect(x - radius, y - radius, radius * 2, radius * 2);
-          else if (settings.dotShape === "triangle") {
-            context.moveTo(x, y - radius);
-            context.lineTo(x + radius, y + radius);
-            context.lineTo(x - radius, y + radius);
-            context.closePath();
-          } else context.arc(x, y, radius, 0, Math.PI * 2);
-          context.fill();
-        }
-      }
-    }
-    context.globalAlpha = 1;
-  }, [activePlate, settings.angles, settings.cellSize, settings.dotShape, settings.frayedXEdge, settings.frayedYEdge, settings.grayscale, settings.visible]);
-
-  function cyclePatternPlate() {
-    const sequence: Plate[] = ["composite", ...applicablePlates];
-    const next = sequence[(sequence.indexOf(activePlate) + 1) % sequence.length];
-    setActivePlate(next);
-  }
-
-  // §1: "a print tool that misleads the eye about ink is broken." renderHalftone
-  // blanks any plate (including every plate inside a composite render) whose
-  // settings.visible flag is off, so the proof can go blank while its label
-  // still claims to show something. hiddenPlates drives the same label logic
-  // for both the single-plate case (already handled below) and composite.
+  /* ----- derived preflight (unchanged) ----- */
   const hiddenPlates = useMemo(
     () => applicablePlates.filter((plate) => !settings.visible[plate]),
     [settings.visible, applicablePlates],
+  );
+  const enabledPlates = useMemo(
+    () => applicablePlates.filter((plate) => settings.visible[plate]),
+    [applicablePlates, settings.visible],
   );
   const sharedAngleGroups = useMemo(() => {
     const grouped = new Map<number, Array<(typeof PLATES)[number]>>();
@@ -383,107 +740,95 @@ export default function HalftoneStudio() {
     documentSettings.sheetSize,
     documentSettings.orientation,
   );
-  const screenLoad = applicablePlates.filter((plate) => settings.visible[plate]).reduce<{
-    marks: number;
-    plate: (typeof PLATES)[number] | null;
-  }>(
-    (worst, plate) => {
-      const marks = estimateGridPoints(
-        outputDimensions.width,
-        outputDimensions.height,
-        settings.cellSize,
-        settings.angles[plate],
-      );
-      return marks > worst.marks ? { marks, plate } : worst;
-    },
-    { marks: 0, plate: null },
-  );
-  const screenLoadIsDense = screenLoad.marks > MAX_EXPORT_GRID_POINTS;
+  const screenLoad = applicablePlates
+    .filter((plate) => settings.visible[plate])
+    .reduce<{ marks: number; plate: (typeof PLATES)[number] | null }>(
+      (worst, plate) => {
+        const marks = estimateGridPoints(
+          outputDimensions.width,
+          outputDimensions.height,
+          settings.cellSize,
+          settings.angles[plate],
+        );
+        return marks > worst.marks ? { marks, plate } : worst;
+      },
+      { marks: 0, plate: null },
+    );
+  const diffusionPixelLoad =
+    outputDimensions.width * outputDimensions.height * Math.max(1, enabledPlates.length);
+  const diffusionMemoryBytes = outputDimensions.width * outputDimensions.height * 24;
+  const screenLoadIsDense = settings.diffusionEnabled
+    ? diffusionPixelLoad > MAX_DIFFUSION_RASTER_PIXELS
+    : screenLoad.marks > MAX_EXPORT_GRID_POINTS;
+  // Dot-polarity review keys on the CANONICAL output polarity (the only
+  // output-stage inversion), never the per-layer recipe inverts.
+  const polarityInverted = core.output.polarity === "negative";
   const preflightReviewCount =
     (hiddenPlates.length > 0 ? 1 : 0) +
     (sharedAngleGroups.length > 0 ? 1 : 0) +
     (!registration ? 1 : 0) +
-    (settings.invert ? 1 : 0) +
+    (polarityInverted ? 1 : 0) +
     (screenLoadIsDense ? 1 : 0);
 
+  /* ----- resets (project commands, one transaction each) ----- */
+
   function resetHalftoneCmyk() {
-    setSettings((current) => ({
-      ...current,
-      cellSize: DEFAULT_SETTINGS.cellSize,
-      frayedXEdge: DEFAULT_SETTINGS.frayedXEdge,
-      frayedYEdge: DEFAULT_SETTINGS.frayedYEdge,
-      dotShape: DEFAULT_SETTINGS.dotShape,
-      strokeWidth: DEFAULT_SETTINGS.strokeWidth,
-      grayscale: DEFAULT_SETTINGS.grayscale,
-      angles: { ...DEFAULT_SETTINGS.angles },
-      visible: { ...DEFAULT_SETTINGS.visible },
-    }));
+    apply(resetHalftoneCommands(core, primaryLayer), "Reset halftone");
     setActivePlate("composite");
     setNotice("Halftone / CMYK controls reset");
   }
 
   function resetArtwork() {
-    setDocumentSettings({ ...DEFAULT_DOCUMENT_SETTINGS });
+    updateDocument({ ...DEFAULT_DOCUMENT_SETTINGS });
     setNotice("Artwork controls reset");
   }
 
-  function applyCmykPreset(presetId: string) {
-    const preset = CMYK_PRESETS.find((item) => item.id === presetId);
-    if (!preset) return;
-    setSettings((current) => ({ ...current, angles: { ...preset.angles } }));
-    setActivePlate("composite");
-    setNotice(`${preset.label} loaded`);
-  }
-
   function resetOutput() {
-    registrationLoadRef.current++;
-    setSettings((current) => ({
-      ...current,
-      opacity: 1,
-      invert: false,
-    }));
-    setRegistration(true);
-    setRegistrationSize(120);
-    setRegistrationOffset(120);
-    setRegistrationWeight(2);
-    setRegistrationShape(undefined);
-    setRegistrationMode("corners");
+    // Canonical output only: polarity, press mirror, registration defaults
+    // and mark geometry. Never layer recipes or opacity (P0 contract).
+    apply(resetOutputCommands(), "Reset output");
+    // The session proof overlay follows the document default again.
+    setProofOverlayOverride(null);
     setNotice("Output controls reset");
   }
 
-  function setRegistrationEnabled(enabled: boolean) {
-    registrationLoadRef.current++;
-    setRegistration(enabled);
-    setRegistrationSize(120);
-    setRegistrationOffset(120);
-    setRegistrationWeight(2);
-    setRegistrationShape(undefined);
-    setRegistrationMode("corners");
-  }
-
   function resetDiffusion() {
-    setSettings((current) => ({
-      ...current,
-      ...DIFFUSION_DEFAULTS,
-    }));
+    apply(resetDiffusionCommands(primaryLayer), "Reset diffusion");
     setNotice("Diffusion controls reset");
   }
 
   function resetGlitch() {
-    setSettings((current) => ({
-      ...current,
-      ...GLITCH_DEFAULTS,
-    }));
+    apply(resetGlitchCommands(primaryLayer), "Reset glitch");
     setNotice("Glitch controls reset");
   }
 
+  function fitArtworkToSheet() {
+    if (!source || !primaryLayerId) return;
+    const currentCore = store.getEnvelope().core;
+    const layer = currentCore.layers.find((entry) => entry.id === primaryLayerId);
+    if (!layer || layer.locked) return;
+    const sourceWidth = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
+    const sourceHeight = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
+    const { widthPx, heightPx } = currentCore.artboard;
+    const scale = getFitScalePercent(sourceWidth, sourceHeight, widthPx, heightPx) / 100;
+    apply({
+      type: "layer/set-transform",
+      layerId: layer.id,
+      patch: composeTransformPatch(layer.transform, {
+        position: { x: widthPx / 2, y: heightPx / 2 },
+        scale: { x: scale, y: scale },
+      }),
+    }, "Fit artwork");
+  }
+
+  /* ----- job ticket / export (legacy path, unchanged output) ----- */
+
   function jobTicketText() {
-    const visible = applicablePlates.filter((plate) => settings.visible[plate])
+    const visible = applicablePlates
+      .filter((plate) => settings.visible[plate])
       .map((plate) => PLATE_META[plate].short)
       .join(", ");
-    const sheet = SHEET_SIZES.find(
-      ({ id }) => id === documentSettings.sheetSize,
-    );
+    const sheet = SHEET_SIZES.find(({ id }) => id === documentSettings.sheetSize);
     return [
       `${PRODUCT_NAME} JOB TICKET`,
       `Artwork: ${sourceName}`,
@@ -494,34 +839,31 @@ export default function HalftoneStudio() {
       `Resolution: ${DOCUMENT_DPI} DPI`,
       `Scale: ${documentSettings.scalePercent}%`,
       `Mirror: ${
-        documentSettings.mirrorImage
-          ? titleCase(documentSettings.mirrorDirection)
-          : "Off"
+        documentSettings.mirrorImage ? titleCase(documentSettings.mirrorDirection) : "Off"
       }`,
       `Dot: ${settings.dotShape}`,
-      ...(settings.dotShape === "custom" && settings.customShape ? [`Custom SVG: ${settings.customShape.filename} (stretched to square)`] : []),
+      ...(settings.dotShape === "custom" && settings.customShape
+        ? [`Custom SVG: ${settings.customShape.filename} (stretched to square)`]
+        : []),
       `Color mode: ${settings.grayscale ? "Grayscale (K)" : "CMYK"}`,
       `Outline stroke: ${settings.strokeWidth ?? 1}px`,
       `Cell size: ${settings.cellSize}px`,
-      `Angles: ${applicablePlates.map(
-        (plate) => `${PLATE_META[plate].short} ${settings.angles[plate]}°`,
-      ).join(" · ")}`,
+      `Angles: ${applicablePlates
+        .map((plate) => `${PLATE_META[plate].short} ${settings.angles[plate]}°`)
+        .join(" · ")}`,
       `Enabled plates: ${visible || "None"}`,
+      `Omitted plates: ${hiddenPlates.map((plate) => PLATE_META[plate].short).join(", ") || "None"}`,
+      `Render mode: ${settings.diffusionEnabled ? "Diffusion" : "Halftone"}`,
+      `Opacity: ${Math.round(settings.opacity * 100)}%`,
       `Registration marks: ${registration ? "Included" : "Off"}`,
       `Registration size: ${registrationSize}px`,
       `Registration offset: ${registrationOffset}px`,
       `Registration weight: ${registrationWeight}px`,
       `Registration mode: ${registrationMode === "centered" ? "Top/bottom centered" : "Four corners"}`,
       ...(registrationShape ? [`Registration SVG: ${registrationShape.filename}`] : []),
-      `Estimated screen load: ${screenLoad.marks.toLocaleString(
-        "en-US",
-      )} marks/plate${
-        screenLoad.plate
-          ? ` (${PLATE_META[screenLoad.plate].short} at ${
-              settings.angles[screenLoad.plate]
-            }°)`
-          : ""
-      }`,
+      settings.diffusionEnabled
+        ? `Estimated diffusion load: ${diffusionPixelLoad.toLocaleString("en-US")} plate-pixels / ${Math.ceil(diffusionMemoryBytes / 1024 / 1024)} MiB working memory`
+        : `Estimated screen load: ${screenLoad.marks.toLocaleString("en-US")} marks/plate${screenLoad.plate ? ` (${PLATE_META[screenLoad.plate].short} at ${settings.angles[screenLoad.plate]}°)` : ""}`,
     ].join("\n");
   }
 
@@ -539,64 +881,157 @@ export default function HalftoneStudio() {
     }
   }
 
-  async function loadFile(file: File) {
-    const request = ++artworkLoadRef.current;
-    if (artworkImageRef.current) {
-      artworkImageRef.current.onload = artworkImageRef.current.onerror = null;
-      artworkImageRef.current.src = "";
-      artworkImageRef.current = undefined;
-    }
-    if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
-    artworkUrlRef.current = undefined;
-    const fileError = validateImageFile(file);
-    if (fileError) {
-      setNotice(fileError);
+  /* ----- artwork import: asset store + layer command -----
+   *
+   * TWO flows share the intake pipeline, split BEFORE anything async:
+   * - REPLACE (Select panel / canvas drop): replaces the layer that was
+   *   primary when the picker opened;
+   * - ADD (Layers panel): preserves the whole stack and artboard.
+   * The intent is captured as an IMMUTABLE value when the picker opens and
+   * travels with the load; the global artworkLoadRef keeps latest-wins, so
+   * two racing intakes can never tear state. */
+
+  const intakeIntentRef = useRef<ArtworkIntakeIntent>({
+    mode: "replace",
+    targetLayerId: null,
+  });
+
+  const requestArtworkReplace = useCallback(() => {
+    intakeIntentRef.current = {
+      mode: "replace",
+      targetLayerId: primaryLayerId,
+    };
+    fileRef.current?.click();
+  }, [primaryLayerId]);
+
+  const requestArtworkAdd = useCallback(() => {
+    if (layers.length >= RESOURCE_POLICY.maxLayers) {
+      setNotice(layerCapError());
       return;
     }
-    const signatureError = await validateImageSignature(file);
-    if (request !== artworkLoadRef.current) return;
-    if (signatureError) { setNotice(signatureError); return; }
-    const url = URL.createObjectURL(file);
-    artworkUrlRef.current = url;
-    const image = new Image();
-    artworkImageRef.current = image;
-    image.onload = () => {
-      if (artworkImageRef.current === image) artworkImageRef.current = undefined;
-      URL.revokeObjectURL(url);
-      if (artworkUrlRef.current === url) artworkUrlRef.current = undefined;
+    intakeIntentRef.current = { mode: "add" };
+    fileRef.current?.click();
+  }, [layers.length]);
+
+  async function loadFile(file: File, intent: ArtworkIntakeIntent) {
+    const request = ++artworkLoadRef.current;
+    artworkAbortRef.current?.abort();
+    const artworkAbort = new AbortController();
+    artworkAbortRef.current = artworkAbort;
+    // BYTES-LEVEL validation BEFORE any decoder runs (io/raster-validator
+    // via the intake module: magic bytes, MIME/extension cross-checks,
+    // APNG/animated-WebP rejection, header dimension + pixel quotas; SVG
+    // through the strict "artwork" sanitizer). Typed rejections surface in
+    // the existing toast style.
+    let intake: Awaited<ReturnType<typeof validateArtworkFile>>;
+    try {
+      intake = await validateArtworkFile(file);
+    } catch (error) {
       if (request !== artworkLoadRef.current) return;
-      const dimensionError = validateImageDimensions(image.naturalWidth, image.naturalHeight);
-      if (dimensionError) {
-        setNotice(dimensionError);
+      setNotice(
+        error instanceof ArtworkIntakeError ? error.message : "That image could not be read.",
+      );
+      return;
+    }
+    if (request !== artworkLoadRef.current) return;
+    // Decode AFTER validation — rasters from the validated bytes, SVGs from
+    // the CANONICAL sanitized markup (the only form that is ever stored).
+    const decodeBlob =
+      intake.kind === "raster"
+        ? new Blob([intake.bytes.slice() as unknown as BlobPart], { type: intake.info.mime })
+        : new Blob([intake.sanitized.svg], { type: "image/svg+xml" });
+    let image: HTMLImageElement;
+    try {
+      image = await loadImageBlob(decodeBlob, { signal: artworkAbort.signal });
+    } catch {
+      if (!artworkAbort.signal.aborted) setNotice("That image could not be opened.");
+      return;
+    }
+    if (request !== artworkLoadRef.current) return;
+    const dims =
+      intake.kind === "raster"
+        ? { width: intake.info.width, height: intake.info.height }
+        : {
+            width: image.naturalWidth || Math.round(intake.sanitized.width),
+            height: image.naturalHeight || Math.round(intake.sanitized.height),
+          };
+    if (open.readOnly) {
+      notifyReadOnly();
+      return;
+    }
+    try {
+      const record =
+        intake.kind === "raster"
+          ? await controller.assets.putBlob(intake.bytes, "raster", intake.info.mime, dims)
+          : await controller.assets.putBlob(
+              new TextEncoder().encode(intake.sanitized.svg),
+              "svg",
+              "image/svg+xml",
+              dims,
+            );
+      if (request !== artworkLoadRef.current || artworkAbort.signal.aborted) return;
+      // Keep the decoded image so the canvas never re-decodes the blob.
+      cache.primeImage(record.sha256, image);
+
+      const envelope = store.getEnvelope();
+      const currentCore = envelope.core;
+      const layer = createLayerFromAsset(
+        record.sha256,
+        file.name,
+        { width: image.naturalWidth, height: image.naturalHeight },
+        currentCore.artboard,
+      );
+      if (intent.mode === "replace") {
+        // Parity: replaced artwork is screened immediately (never "clean").
+        layer.recipe.mode = "halftone";
+      }
+      // ADD keeps createLayerFromAsset's contract: Clean mode, Glitch off.
+
+      const result = artworkIntakeCommands(currentCore, intent, layer);
+      if (!result.ok) {
+        setNotice(result.error);
         return;
       }
-      setSource(image);
-      setSourceName(file.name);
-      setActivePlate("composite");
-      const ratio = image.naturalWidth / image.naturalHeight;
-      setDocumentSettings((current) => ({
-        ...current,
-        orientation:
-          ratio > 1.1
-            ? "landscape"
-            : ratio < 0.9
-              ? "portrait"
-              : current.orientation,
-      }));
-      setNotice("Artwork loaded");
-    };
-    image.onerror = () => {
-      if (artworkImageRef.current === image) artworkImageRef.current = undefined;
-      URL.revokeObjectURL(url);
-      if (artworkUrlRef.current === url) artworkUrlRef.current = undefined;
-      if (request === artworkLoadRef.current) setNotice("That image could not be opened.");
-    };
-    image.src = url;
+      const commands: Command[] = [...result.commands];
+      if (intent.mode === "replace") {
+        // Orientation auto-fit is a REPLACE-only convenience; Add Layer
+        // preserves the artboard exactly.
+        const ratio = image.naturalWidth / image.naturalHeight;
+        const orientation =
+          ratio > 1.1 ? "landscape" : ratio < 0.9 ? "portrait" : documentSettings.orientation;
+        if (orientation !== documentSettings.orientation) {
+          const dims = getSheetPixelDimensions(documentSettings.sheetSize, orientation);
+          commands.push({
+            type: "artboard/resize",
+            widthPx: dims.width,
+            heightPx: dims.height,
+            presetId: documentSettings.sheetSize,
+          });
+        }
+      }
+      if (apply(commands, intent.mode === "add" ? "Add layer" : "Import artwork")) {
+        setSelection([layer.id]);
+        setActivePlate("composite");
+        setNotice(intent.mode === "add" ? "Layer added" : "Artwork loaded");
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The artwork could not be stored.");
+    }
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) void loadFile(file);
+    // Freeze the intent that opened THIS picker before anything async. A
+    // replace intent without a captured target (the input was driven
+    // directly, not through a button) materializes the CURRENT primary now
+    // — the legacy single-artwork convention.
+    let intent = intakeIntentRef.current;
+    if (intent.mode === "replace" && intent.targetLayerId === null) {
+      intent = { mode: "replace", targetLayerId: primaryLayerId };
+    }
+    // Consume the intent: the next direct input drive is a plain replace.
+    intakeIntentRef.current = { mode: "replace", targetLayerId: null };
+    if (file) void loadFile(file, intent);
     event.target.value = "";
   }
 
@@ -606,14 +1041,29 @@ export default function HalftoneStudio() {
     if (!file) return;
     const request = ++registrationLoadRef.current;
     try {
-      const shape = await importCustomShape(file);
+      const shape = await importCustomShape(file, "registration-mark");
       if (request !== registrationLoadRef.current) return;
-      setRegistrationShape(shape);
-      setRegistration(true);
+      const bytes = new TextEncoder().encode(shape.svg);
+      const record = await controller.assets.putBlob(
+        bytes,
+        "svg",
+        "image/svg+xml",
+        svgDimensions(shape.svg),
+      );
+      cache.primeCustomShape(record.sha256, shape);
+      apply(
+        [
+          { type: "registration/update", patch: { customShapeAssetId: record.sha256 } },
+          { type: "output/update", patch: { registrationOnPlates: true } },
+        ],
+        "Registration mark",
+      );
       setNotice(`Registration mark loaded: ${shape.filename}`);
     } catch (error) {
       if (request !== registrationLoadRef.current) return;
-      setNotice(error instanceof Error ? error.message : "That registration SVG could not be imported.");
+      setNotice(
+        error instanceof Error ? error.message : "That registration SVG could not be imported.",
+      );
     }
   }
 
@@ -621,177 +1071,816 @@ export default function HalftoneStudio() {
     event.preventDefault();
     setDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) void loadFile(file);
+    // Canvas drop keeps the single-artwork convention: replace the primary.
+    if (file) void loadFile(file, { mode: "replace", targetLayerId: primaryLayerId });
   }
 
-  async function exportArtwork(kind: "png" | "svg" | "jpg" | "tiff" | "plates") {
-    if (!source) return;
-    if (screenLoadIsDense) {
-      setExportOpen(false);
-      setNotice(
-        `Export blocked: estimated ${screenLoad.marks.toLocaleString(
-          "en-US",
-        )} marks per plate exceeds the ${MAX_EXPORT_GRID_POINTS.toLocaleString(
-          "en-US",
-        )} limit. Increase cell size to export.`,
+  /* ----- export: the REAL pipeline (preflight -> orchestrator -> deliver).
+   * Every UI export builds an ExportTarget from the CURRENT core, freezes
+   * the session revision into the job, preflights via evaluate() with
+   * probed capabilities, and runs startExport over the routed render
+   * service (legacyEngineEligible is the ONLY parity gate). ----- */
+
+  const [assetInfos, setAssetInfos] = useState<ReadonlyMap<string, AssetInfo>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void loadAssetInfos(core, controller.assets).then((infos) => {
+      if (!cancelled) setAssetInfos(infos);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [core, controller]);
+  /* Record-backed asset dimensions for the render planner: the SAME
+   * AssetRecordV1 width/height preflight consumes — never the sync image
+   * cache, which is null on a cold cache and retains HTMLImageElements. */
+  const assetInfosRef = useRef(assetInfos);
+  assetInfosRef.current = assetInfos;
+  const recordAssetDimensions = useCallback((assetId: string) => {
+    const info = assetInfosRef.current.get(assetId);
+    return info && info.ok && info.kind === "raster"
+      ? { width: info.width, height: info.height, byteLength: info.byteLength }
+      : null;
+  }, []);
+
+  const exportRenderRef = useRef<RenderService | null>(null);
+  const getExportRenderService = useCallback((): RenderService => {
+    if (!exportRenderRef.current) {
+      exportRenderRef.current = createStudioRenderService(
+        cache,
+        probeEnvironmentCapabilities(),
+        recordAssetDimensions,
       );
+    }
+    return exportRenderRef.current;
+  }, [cache, recordAssetDimensions]);
+
+  /* Warning confirmations bind to the exact warn set + revision. */
+  const warningGateRef = useRef(createWarningGate());
+
+  /* Export workflow state (target/progress/cancel/warnings) is SESSION
+   * state: the shell unmounts the Export panel on tool switches / Focus
+   * Mode, and a re-mounted panel must bind back into a live run. One store
+   * per open studio; duplicate starts are rejected inside the store. */
+  const exportSessionRef = useRef<ExportSessionStore | null>(null);
+  if (exportSessionRef.current === null) {
+    exportSessionRef.current = createExportSessionStore();
+  }
+  const exportSession = exportSessionRef.current;
+
+  /* Legacy naming base: artifacts and job-settings.source derive from the
+   * ARTWORK SOURCE name (primary layer), never the project title —
+   * renaming a project must not change press artifact names. Empty name →
+   * exportBaseName's documented "untitled" fallback. */
+  const exportSourceName = primaryLayer?.name ?? "";
+
+  const exportPipeline: ExportPipeline = {
+    evaluate: (target: ExportTarget) =>
+      preflightForTarget(
+        store.getEnvelope().core,
+        (assetId) => assetInfos.get(assetId) ?? null,
+        target,
+        store.getState().revision,
+        probeEnvironmentCapabilities(),
+      ),
+    vectorEligibility: () => vectorPlateEligibility(core),
+    selectedLayerId: primaryLayerId,
+    unconfirmedWarnings: (issues) => warningGateRef.current.unconfirmed(issues),
+    confirmWarnings: (issues) => warningGateRef.current.confirm(issues),
+    start: (target, hooks) => {
+      const envelope = store.getEnvelope();
+      setExporting(true);
+      const pickerHost = globalThis as {
+        showSaveFilePicker?: NonNullable<
+          Parameters<typeof deliverStudioExport>[1]["showSaveFilePicker"]
+        >;
+      };
+      // A SYNCHRONOUS startStudioExport throw must reset the shell's
+      // exporting flag (the session store rolls back separately) — the
+      // TopBar loader can never wedge on a construction failure.
+      let run: ReturnType<typeof startStudioExport>;
+      try {
+        run = buildStudioExportRun();
+      } catch (error) {
+        setExporting(false);
+        setNotice(error instanceof Error ? error.message : "Export failed");
+        throw error;
+      }
+      function buildStudioExportRun() {
+        return startStudioExport({
+        core: envelope.core,
+        revision: store.getState().revision,
+        sourceName: exportSourceName,
+        target,
+        render: getExportRenderService(),
+        encoders: BROWSER_EXPORT_ENCODERS,
+        // Plate-package job-settings.json echoes customShape/registrationShape
+        // through this resolver, in the legacy RENDER form (permissive
+        // sanitize: 1024² root + preserveAspectRatio="none" stretch) — the
+        // form parseSettings/prepareCustomShape reproduce plates from. The
+        // STORED asset stays strict-canonical; this is a presentation
+        // projection only.
+        resolveCustomShape: async (id) => {
+          const shape = await ensureLive(
+            cacheRef,
+            () => new AssetCache(controller.assets),
+          ).customShapeWhenReady(id);
+          const { sanitizeSvg } = await import("./custom-shape-data");
+          return { filename: shape.filename, svg: sanitizeSvg(shape.svg) };
+        },
+        // Custom registration marks paint AFTER polarity (final content
+        // pass) through the same main-thread painter the render path uses.
+        prepareCustomRegistration: (registrationState, width, height, signal) =>
+          createRegistrationPainter(
+            ensureLive(cacheRef, () => new AssetCache(controller.assets)),
+          ).prepareRows(registrationState, width, height, signal),
+        paintCustomRegistration: (raster, registrationState) =>
+          createRegistrationPainter(
+            ensureLive(cacheRef, () => new AssetCache(controller.assets)),
+          ).paintRaster(raster, registrationState),
+        deliver: (files) =>
+          deliverStudioExport(files, {
+            saveBlob: downloadExportBlob,
+            ...(pickerHost.showSaveFilePicker
+              ? { showSaveFilePicker: pickerHost.showSaveFilePicker.bind(globalThis) }
+              : {}),
+          }),
+        onProgress: (progress) => hooks.onProgress?.(progress.fraction),
+        });
+      }
+      const done = run.done
+        .then((files) => {
+          setNotice(`Exported ${files.map((file) => file.name).join(", ")}`);
+          return "done" as const;
+        })
+        .catch((error: unknown) => {
+          if (error instanceof ExportCancelledError) {
+            setNotice("Export cancelled");
+            return "cancelled" as const;
+          }
+          setNotice(error instanceof Error ? error.message : "Export failed");
+          return "error" as const;
+        })
+        .finally(() => setExporting(false));
+      return { cancel: run.cancel, done };
+    },
+  };
+
+  /* ----- project flows: new / home / save / rename / conflict ----- */
+
+  const runGuardedAction = useCallback(
+    async (action: GuardedAction) => {
+      if (action === "new") {
+        const id = await controller.createProject();
+        navigate(`/?project=${encodeURIComponent(id)}`);
+      } else {
+        await controller.closeProject();
+        navigate("/home");
+      }
+    },
+    [controller, navigate],
+  );
+
+  const requestGuardedAction = useCallback(
+    (action: GuardedAction) => {
+      if (!controller.isOpenProjectDirty()) {
+        void runGuardedAction(action);
+        return;
+      }
+      captureDialogInvoker();
+      setDirtyGuard(action);
+    },
+    [controller, runGuardedAction, captureDialogInvoker],
+  );
+
+  function onDirtyGuardChoice(choice: DirtyGuardChoice) {
+    const action = dirtyGuard;
+    setDirtyGuard(null);
+    if (!action) return;
+    if (choice === "cancel") {
+      restoreDialogInvoker();
       return;
     }
-    setExportOpen(false);
-    setExporting(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    if (choice === "discard") {
+      void controller.discardOpenProjectChanges().then(() => runGuardedAction(action));
+      return;
+    }
+    if (controller.savePlan() === "dialog") {
+      setSaveDialog({ continueWith: action });
+      return;
+    }
+    void controller
+      .performSave()
+      .then(() => runGuardedAction(action))
+      .catch((error) => {
+        if (error instanceof ConflictError) setConflictOpen(true);
+      });
+  }
 
+  const requestSave = useCallback(() => {
+    if (open.readOnly) {
+      notifyReadOnly();
+      return;
+    }
+    if (controller.savePlan() === "dialog") {
+      captureDialogInvoker();
+      setSaveDialog({ continueWith: null });
+      return;
+    }
+    void controller.performSave().catch((error) => {
+      if (error instanceof ConflictError) setConflictOpen(true);
+    });
+  }, [controller, open.readOnly, notifyReadOnly, captureDialogInvoker]);
+
+  async function onSaveDialogSubmit(name: string) {
+    const continueWith = saveDialog?.continueWith ?? null;
     try {
-      const { width, height } = outputDimensions;
-      if (settings.dotShape === "custom" && settings.customShape) await prepareCustomShape(settings.customShape);
-      if (registrationShape) await prepareCustomShape(registrationShape);
-
-      if (kind !== "plates") {
-        if (kind === "svg") {
-          const baseName = cleanName(sourceName);
-          const svgZip = new JSZip();
-          const folder = `${baseName}_SVG_Plates`;
-          for (const plate of applicablePlates) {
-            const svg = renderPlateSvg(source, settings, plate, {
-              width,
-              height,
-              document: documentSettings,
-              registration, registrationSize, registrationOffset, registrationWeight,
-              registrationShape, registrationMode,
-            });
-            svgZip.file(`${folder}/${settings.grayscale ? "K" : PLATE_META[plate].short}.svg`, svg);
-          }
-          svgZip.file(`${folder}/job-settings.json`, JSON.stringify({
-            source: sourceName,
-            document: documentSettings,
-            settings,
-            plates: applicablePlates,
-            registration, registrationSize, registrationOffset, registrationWeight,
-            registrationShape, registrationMode,
-            output: { width, height, dpi: DOCUMENT_DPI },
-            fill: "#000000",
-            vector: true,
-          }, null, 2));
-          const svgPackage = await svgZip.generateAsync({ type: "blob" });
-          downloadBlob(svgPackage, `${folder}.zip`);
-          setNotice("Vector SVG plate package exported");
-          return;
-        }
-        const canvas = document.createElement("canvas");
-        renderHalftone(source, canvas, settings, {
-          plate: "composite",
-          width,
-          height,
-          registration,
-          registrationSize,
-          registrationOffset,
-          registrationWeight,
-          registrationShape,
-          registrationMode,
-          paper: documentSettings.background === "black" ? "#000000" : "#ffffff",
-          document: documentSettings,
-        });
-        const baseName = cleanName(sourceName);
-        let blob: Blob | null;
-        let filename: string;
-        if (kind === "tiff") {
-          blob = new Blob([encodeRgbaTiff(canvas)], { type: "image/tiff" });
-          filename = `${baseName}-halftone.tiff`;
-        } else {
-          blob = await new Promise<Blob | null>((resolve) =>
-            canvas.toBlob(resolve, kind === "jpg" ? "image/jpeg" : "image/png", 0.92),
-          );
-          filename = `${baseName}-halftone.${kind}`;
-        }
-        if (!blob) throw new Error("Export failed");
-        const output = kind === "png" ? await withPngDpi(blob, DOCUMENT_DPI) : blob;
-        downloadBlob(output, filename);
-        setNotice(`Composite ${kind.toUpperCase()} exported`);
-      } else {
-        const zip = new JSZip();
-        for (const plate of applicablePlates) {
-          const canvas = document.createElement("canvas");
-          renderHalftone(source, canvas, settings, {
-            plate,
-            width,
-            height,
-            registration,
-            paper: documentSettings.background === "black" ? "#000000" : "#ffffff",
-            monochromePlate: true,
-            document: documentSettings,
-            registrationSize,
-            registrationOffset,
-            registrationWeight,
-            registrationShape,
-            registrationMode,
-          });
-          const plateBlob = await new Promise<Blob | null>((resolve) =>
-            canvas.toBlob(resolve, "image/png"),
-          );
-          if (!plateBlob) throw new Error("Plate export failed");
-          const dpiBlob = await withPngDpi(plateBlob, DOCUMENT_DPI);
-          zip.file(
-            `${cleanName(sourceName)}-${PLATE_META[plate].short}-plate.png`,
-            dpiBlob,
-          );
-        }
-        zip.file(
-          "job-settings.json",
-          JSON.stringify(
-            {
-              source: sourceName,
-              document: documentSettings,
-              settings,
-              registration,
-              registrationSize,
-              registrationOffset,
-              registrationWeight,
-              registrationShape,
-              registrationMode,
-              output: {
-                width,
-                height,
-                dpi: DOCUMENT_DPI,
-                estimatedMarksPerPlate: screenLoad.marks,
-                worstPlate: screenLoad.plate,
-                worstAngle:
-                  screenLoad.plate === null
-                    ? null
-                    : settings.angles[screenLoad.plate],
-              },
-            },
-            null,
-            2,
-          ),
-        );
-        const blob = await zip.generateAsync({ type: "blob" });
-        downloadBlob(blob, `${cleanName(sourceName)}-${settings.grayscale ? "K" : "CMYK"}-plates.zip`);
-        setNotice(`${settings.grayscale ? "Grayscale K" : "CMYK"} plate package exported`);
-      }
-    } catch {
-      setNotice("Export could not be completed.");
-    } finally {
-      setExporting(false);
+      await controller.performSave(name);
+      setSaveDialog(null);
+      setNotice("Project saved");
+      if (continueWith) await runGuardedAction(continueWith);
+      else restoreDialogInvoker();
+    } catch (error) {
+      setSaveDialog(null);
+      if (error instanceof ConflictError) setConflictOpen(true);
+      else setNotice(error instanceof Error ? error.message : "The project could not be saved.");
     }
   }
 
-  // §6.2 channel tinting: every active affordance renders in the soloed
-  // plate's ink so the operator never has to ask which plate they're
-  // editing. Composite carries no single plate hue (COMPOSITE_INK, not a
-  // CHROME_INK value) — presented as a hairline stripe instead (InkRail).
-  const activeInk =
-    activePlate === "composite" ? COMPOSITE_INK : CHROME_INK[activePlate];
+  /* ----- snapshots ----- */
 
-  const stages: Stage[] = STAGE_DEFINITIONS.map((stage) => ({
-    ...stage,
-    complete: stage.id === "artwork" ? Boolean(source) : false,
-  }));
+  /**
+   * SNAPSHOT ATOMICITY — phase 1, synchronous: copy the proof canvas pixels
+   * into an offscreen thumbnail canvas AT CLICK TIME, before any await, so
+   * the captured pixels and the synchronously frozen core are one
+   * representation. (The thumbnail is rendered from the live canvas, so the
+   * canvas — not a re-render of the core — is the source of truth; pairing
+   * both captures in the same synchronous frame is what keeps them split-
+   * proof against mid-await edits.)
+   */
+  const captureThumbnailCanvas = useCallback((): HTMLCanvasElement | null => {
+    const canvas = canvasRef.current;
+    if (!canvas || canvas.width === 0) return null;
+    try {
+      const thumb = document.createElement("canvas");
+      const scale = Math.min(1, 240 / Math.max(canvas.width, canvas.height));
+      thumb.width = Math.max(1, Math.round(canvas.width * scale));
+      thumb.height = Math.max(1, Math.round(canvas.height * scale));
+      thumb.getContext("2d")?.drawImage(canvas, 0, 0, thumb.width, thumb.height);
+      return thumb;
+    } catch {
+      return null;
+    }
+  }, []);
 
-  function jumpToStage(id: string) {
-    if (!STAGE_DEFINITIONS.some((stage) => stage.id === id)) return;
-    setActiveStage(id as StudioStageId);
-    setInspectorCollapsed(false);
-  }
+  /** Phase 2, asynchronous: encode + persist the frozen thumbnail pixels. */
+  const persistThumbnail = useCallback(
+    async (thumb: HTMLCanvasElement | null): Promise<string | null> => {
+      if (!thumb) return null;
+      try {
+        const blob = await new Promise<Blob | null>((resolve) =>
+          thumb.toBlob(resolve, "image/png"),
+        );
+        if (!blob) return null;
+        const record = await controller.assets.putBlob(blob, "thumbnail", "image/png", {
+          width: thumb.width,
+          height: thumb.height,
+        });
+        return record.sha256;
+      } catch {
+        return null;
+      }
+    },
+    [controller],
+  );
+
+  /* ----- presets (device-global) ----- */
+
+  const [presets, setPresets] = useState<RecipePresetV1[]>([]);
+  const refreshPresets = useCallback(async () => {
+    try {
+      setPresets(await controller.presets.list());
+    } catch {
+      /* preset list is non-critical */
+    }
+  }, [controller]);
+  useEffect(() => {
+    void refreshPresets();
+  }, [refreshPresets]);
+
+  /* ----- ProjectUi (TopBar + panels contract) ----- */
+
+  // Same rule as controller.isOpenProjectDirty, derived reactively: edits
+  // past the last save, or content living outside the saved library.
+  const dirty =
+    !open.readOnly && (projectState.dirty || !open.persisted || open.casToken === 0);
+
+  const projectUi: ProjectUi = {
+    projectId: open.projectId,
+    title: open.title,
+    dirty,
+    readOnly: open.readOnly,
+    recovered: open.recovered,
+    recoveryState: snapshot.recoveryState,
+    storageAlert: snapshot.storageAlert,
+    dismissStorageAlert: () => controller.clearStorageAlert(),
+
+    core,
+    layers,
+    selectedLayerIds,
+    primaryLayerId,
+    selectLayer: (layerId, options) => {
+      setSelection((current) => {
+        if (!options?.additive) return [layerId];
+        return current.includes(layerId)
+          ? current.filter((id) => id !== layerId)
+          : [...current, layerId];
+      });
+    },
+
+    canUndo: projectState.canUndo,
+    canRedo: projectState.canRedo,
+    undoDepth: doc.undoDepth,
+    redoDepth: doc.redoDepth,
+    undoLabels: doc.getUndoLabels(),
+    undo: () => {
+      if (open.readOnly) notifyReadOnly();
+      else doc.undo();
+    },
+    redo: () => {
+      if (open.readOnly) notifyReadOnly();
+      else doc.redo();
+    },
+
+    requestNewProject: () => requestGuardedAction("new"),
+    requestHome: () => requestGuardedAction("home"),
+    requestSave,
+    requestRename: () => {
+      captureDialogInvoker();
+      setRenameOpen(true);
+    },
+
+    requestOwnership: () => controller.requestOwnership(),
+    duplicateReadonly: () => {
+      void controller.duplicateAsUnsaved().then((id) => {
+        navigate(`/?project=${encodeURIComponent(id)}`);
+      });
+    },
+
+    saveRecovered: requestSave,
+    revertToLastSave: () => void controller.revertToLastSave(),
+
+    addLayerFromFile: requestArtworkAdd,
+    duplicateLayer: (layerId) => {
+      if (layers.length >= RESOURCE_POLICY.maxLayers) {
+        setNotice(`Projects hold at most ${RESOURCE_POLICY.maxLayers} layers.`);
+        return;
+      }
+      const newLayerId = createId();
+      if (apply({ type: "layer/duplicate", layerId, newLayerId }, "Duplicate layer")) {
+        setSelection([newLayerId]);
+      }
+    },
+    removeLayer: (layerId) => {
+      apply({ type: "layer/remove", layerId }, "Delete layer");
+    },
+    moveLayer: (layerId, direction) => {
+      const index = layers.findIndex((layer) => layer.id === layerId);
+      if (index < 0) return;
+      const toIndex = direction === "up" ? index + 1 : index - 1;
+      if (toIndex < 0 || toIndex >= layers.length) return;
+      apply({ type: "layer/reorder", layerId, toIndex }, "Reorder layer");
+    },
+    renameLayer: (layerId, name) => {
+      if (name.trim()) apply({ type: "layer/rename", layerId, name: name.trim() }, "Rename layer");
+    },
+    setLayerVisible: (layerId, visible) =>
+      void apply({ type: "layer/set-visibility", layerId, visible }, "Layer visibility"),
+    setLayerLocked: (layerId, locked) =>
+      void apply({ type: "layer/set-locked", layerId, locked }, "Layer lock"),
+    setLayerOpacity: (layerId, opacity) =>
+      void apply({ type: "layer/set-opacity", layerId, opacity }, "Layer opacity"),
+    setLayerMode: (layerId, mode) =>
+      void apply({ type: "layer/set-mode", layerId, mode }, "Layer mode"),
+    setLayerPosition: (layerId, axis, value) => {
+      const layer = layers.find((candidate) => candidate.id === layerId);
+      if (!layer) return;
+      apply(
+        {
+          type: "layer/set-transform",
+          layerId,
+          // Compose: a stored perspective quad travels with the move.
+          patch: composeTransformPatch(layer.transform, {
+            position: { ...layer.transform.position, [axis]: value },
+          }),
+        },
+        "Move layer",
+      );
+    },
+
+    applyRecipeToSelected: () => {
+      if (!primaryLayer) return;
+      const recipe = primaryLayer.recipe;
+      const commands: Command[] = [];
+      for (const id of selectedLayerIds) {
+        if (id === primaryLayer.id) continue;
+        const target = layers.find((candidate) => candidate.id === id);
+        if (!target || target.locked) continue;
+        commands.push({
+          type: "recipe/apply-preset",
+          layerId: id,
+          mode: recipe.mode,
+          halftone: {
+            ...recipe.halftone,
+            // Custom-dot assets are content-addressed and shared safely.
+          },
+          diffusion: { ...recipe.diffusion },
+          glitch: { ...recipe.glitch },
+        });
+      }
+      if (commands.length === 0) {
+        setNotice("Select additional unlocked layers to receive the recipe.");
+        return;
+      }
+      if (apply(commands, "Apply recipe to selected")) {
+        setNotice(
+          `Recipe applied to ${commands.length} ${commands.length === 1 ? "layer" : "layers"}`,
+        );
+      }
+    },
+
+    updateGrid: (patch) => void apply({ type: "grid/update", patch }, "Grid"),
+    updateSnapping: (patch) => void apply({ type: "snapping/update", patch }, "Snapping"),
+    setGuidesVisible: (visible) =>
+      void apply({ type: "guides/set-visible", visible }, "Guides"),
+    setGuidesLocked: (locked) =>
+      void apply({ type: "guides/set-locked", locked }, "Lock guides"),
+    clearGuides: () => void apply({ type: "guides/clear" }, "Clear guides"),
+
+    /* Editor surface */
+    applyCommands: (commands, label) => apply(commands, label),
+    editorMode,
+    setEditorMode,
+    rulersVisible,
+    setRulersVisible,
+    assetSizeFor,
+    resizeArtboard: (widthPx, heightPx) =>
+      void apply(
+        { type: "artboard/resize", widthPx, heightPx, presetId: "custom" },
+        "Artboard size",
+      ),
+
+    snapshots: projectState.envelope.snapshots,
+    snapshotCap: RESOURCE_POLICY.maxSnapshots,
+    createSnapshot: async (name) => {
+      if (open.readOnly) {
+        notifyReadOnly();
+        return false;
+      }
+      // ATOMIC pair: freeze the core AND capture the canvas in the same
+      // synchronous frame — before ANY await — then persist the thumbnail
+      // and store the snapshot FROM the frozen core. An edit landing while
+      // the thumbnail blob persists can no longer split the checkpoint
+      // (thumbnail at N, core at N+1); both always represent click time.
+      const frozenCore = store.getEnvelope().core;
+      const thumbCanvas = captureThumbnailCanvas();
+      const thumbnailId = await persistThumbnail(thumbCanvas);
+      const created = doc.addSnapshot(name, thumbnailId, frozenCore);
+      if (!created) {
+        setNotice(`Snapshot limit reached (${RESOURCE_POLICY.maxSnapshots}). Delete one first.`);
+        return false;
+      }
+      setNotice(`Snapshot “${name}” created`);
+      return true;
+    },
+    restoreSnapshot: (snapshotId) => {
+      if (doc.restoreSnapshot(snapshotId)) setNotice("Snapshot restored — undo to return");
+    },
+    deleteSnapshot: (snapshotId) => void doc.deleteSnapshot(snapshotId),
+    duplicateSnapshotToProject: (snapshotId) => {
+      const envelope = store.duplicateSnapshotToProject(snapshotId);
+      if (!envelope) return;
+      controller.registerUnsavedProject(envelope);
+      navigate(`/?project=${encodeURIComponent(envelope.id)}`);
+    },
+
+    presets,
+    savePreset: async (name) => {
+      if (!primaryLayer) return false;
+      const customDotSvg =
+        primaryLayer.recipe.halftone.dotShape === "custom" && customShape
+          ? customShape.svg
+          : null;
+      await controller.presets.save(createPresetFromLayer(primaryLayer, name, customDotSvg));
+      await refreshPresets();
+      setNotice(`Preset “${name}” saved`);
+      return true;
+    },
+    applyPreset: (presetId) => {
+      const preset = presets.find((candidate) => candidate.id === presetId);
+      if (!preset || !primaryLayerId) return;
+      void (async () => {
+        let customShapeAssetId: string | null | undefined;
+        if (preset.customDotSvg) {
+          const bytes = new TextEncoder().encode(preset.customDotSvg);
+          const record = await controller.assets.putBlob(
+            bytes,
+            "svg",
+            "image/svg+xml",
+            svgDimensions(preset.customDotSvg),
+          );
+          cache.primeCustomShape(record.sha256, {
+            filename: `${preset.name}.svg`,
+            svg: preset.customDotSvg,
+          });
+          customShapeAssetId = record.sha256;
+        }
+        apply(applyPresetCommand(preset, primaryLayerId, customShapeAssetId), "Apply preset");
+      })();
+    },
+    deletePreset: (presetId) => {
+      void controller.presets.delete(presetId).then(refreshPresets);
+    },
+    exportPreset: (presetId) => {
+      const preset = presets.find((candidate) => candidate.id === presetId);
+      if (!preset) return;
+      downloadBlob(
+        new Blob([serializePresetJson(preset)], { type: "application/json" }),
+        `${cleanName(preset.name) || "preset"}.drpreset`,
+      );
+    },
+    importPresetFile: async (file) => {
+      const result = parsePreset(await file.text());
+      if (!result.ok) {
+        setNotice(`Preset rejected: ${result.error}`);
+        return false;
+      }
+      await controller.presets.save(result.preset);
+      await refreshPresets();
+      setNotice(`Preset “${result.preset.name}” imported`);
+      return true;
+    },
+  };
+
+  /* ----- legacy StudioApi (panels/drawers contract, unchanged shape) ----- */
+
+  const activeInk = activePlate === "composite" ? COMPOSITE_INK : CHROME_INK[activePlate];
+
+  const api: StudioApi = {
+    source,
+    sourceName,
+    sourceMeta,
+    requestArtworkFile: requestArtworkReplace,
+    resetArtwork,
+    settings,
+    updateSetting,
+    setAngles,
+    resetHalftone: resetHalftoneCmyk,
+    resetDiffusion,
+    resetGlitch,
+    resetOutput,
+    openCustomShapeDialog: () => setCustomShapeOpen(true),
+    activePlate,
+    applicablePlates,
+    enabledPlates,
+    hiddenPlates,
+    soloPlate: handleSolo,
+    togglePlateVisible: handleToggleVisible,
+    setPlateAngle: handleAngleChange,
+    documentSettings,
+    updateDocument,
+    fitArtworkToSheet,
+    outputDimensions,
+    unitDisplay: core.unitPreference as UnitDisplay,
+    setUnitDisplay: (unit) => void apply({ type: "unit/set", unitPreference: unit }, "Units"),
+    zoom,
+    setZoom,
+    zoomBounds: ZOOM_BOUNDS,
+    output: core.output,
+    updateOutput: (patch) => void apply({ type: "output/update", patch }, "Output"),
+    proofRegistration,
+    setProofRegistration: setProofOverlayOverride,
+    registration,
+    setRegistrationEnabled: (enabled) =>
+      void apply(
+        { type: "output/update", patch: { registrationOnPlates: enabled } },
+        "Registration",
+      ),
+    registrationMode,
+    setRegistrationMode: (mode) =>
+      void apply({ type: "registration/update", patch: { mode } }, "Registration"),
+    registrationSize,
+    setRegistrationSize: (value) =>
+      void apply({ type: "registration/update", patch: { size: value } }, "Registration"),
+    registrationOffset,
+    setRegistrationOffset: (value) =>
+      void apply({ type: "registration/update", patch: { offset: value } }, "Registration"),
+    registrationWeight,
+    setRegistrationWeight: (value) =>
+      void apply({ type: "registration/update", patch: { weight: value } }, "Registration"),
+    registrationShape,
+    requestRegistrationFile: () => registrationFileRef.current?.click(),
+    setCompositeRegistration: (enabled) =>
+      void apply(
+        { type: "output/update", patch: { registrationOnComposite: enabled } },
+        "Registration",
+      ),
+    preflight: {
+      reviewCount: preflightReviewCount,
+      hiddenPlates,
+      sharedAngleGroups,
+      registrationOff: !registration,
+      polarityInverted,
+      dense: screenLoadIsDense,
+      screenLoad,
+      diffusionPixelLoad,
+      diffusionMemoryMiB: Math.ceil(diffusionMemoryBytes / 1024 / 1024),
+    },
+    copyJobTicket: () => void copyJobTicket(),
+    exportPipeline,
+    exportSession,
+    exporting,
+    notify: setNotice,
+  };
+
+  const canvasStage = (
+    <div
+      className={[
+        "canvas-stage",
+        dragging ? "dragging" : "",
+        spaceHeld ? "pan-armed" : "",
+        panning ? "panning" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      data-testid="ws-canvas"
+      data-pan-armed={spaceHeld ? "true" : "false"}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragging(false);
+      }}
+      onDrop={onDrop}
+      onPointerDown={(event) => {
+        if (!spaceHeld || event.button !== 0) return;
+        event.preventDefault();
+        panStart.current = {
+          x: event.clientX,
+          y: event.clientY,
+          panX: pan.x,
+          panY: pan.y,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setPanning(true);
+      }}
+      onPointerMove={(event) => {
+        const start = panStart.current;
+        if (!start) return;
+        setPan({
+          x: start.panX + event.clientX - start.x,
+          y: start.panY + event.clientY - start.y,
+        });
+      }}
+      onPointerUp={(event) => {
+        if (!panStart.current) return;
+        panStart.current = null;
+        setPanning(false);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+      onPointerCancel={() => {
+        panStart.current = null;
+        setPanning(false);
+      }}
+    >
+      {open.recovered && (
+        <div className="ws-recovery-banner" data-testid="ws-recovery-banner" role="status">
+          <strong>Recovered unsaved changes.</strong>
+          <span>
+            This project was restored from its recovery journal and is marked unsaved.
+          </span>
+          <button type="button" onClick={projectUi.saveRecovered}>
+            Save
+          </button>
+          <button type="button" onClick={projectUi.revertToLastSave}>
+            Revert to Last Save
+          </button>
+        </div>
+      )}
+
+      <div className="stage-toolbar">
+        <div className="view-status">
+          <Sparkles size={14} />
+          <span>Live browser preview · Space-drag pans</span>
+        </div>
+        <div className="proof-contract" aria-label="Current proof state">
+          {/* Truthful mode label: CLEAN prints continuous tone, unscreened. */}
+          <span data-testid="proof-mode-label">
+            {primaryLayer?.recipe.mode === "clean"
+              ? "Clean"
+              : settings.diffusionEnabled
+                ? "Diffusion"
+                : "Halftone"}
+          </span>
+          <span>{settings.grayscale ? "K" : "CMYK"}</span>
+          <span>{activePlate === "composite" ? "Composite" : PLATE_META[activePlate].short}</span>
+        </div>
+      </div>
+
+      <div className="stage-body">
+        <EditingSurface
+          canvasRef={canvasRef}
+          viewKey={`${zoom}:${pan.x}:${pan.y}:${core.artboard.widthPx}x${core.artboard.heightPx}`}
+        >
+        <div className="canvas-scroll">
+          <div
+            className="artboard-wrap"
+            data-testid="ws-artboard"
+            data-background={core.artboard.background}
+            style={{
+              width: `${zoom}%`,
+              transform: `translate3d(${pan.x}px, ${pan.y}px, 0)`,
+            }}
+            onDoubleClick={() => setZoom(ZOOM_BOUNDS.fit)}
+          >
+            <canvas
+              ref={canvasRef}
+              data-testid="artwork-canvas"
+              aria-label={settings.grayscale ? "Live grayscale halftone preview" : "Live CMYK halftone preview"}
+            />
+            <ArtboardOverlays canvasRef={canvasRef} panArmed={spaceHeld || panning} />
+            <span className="artboard-label" data-testid="artboard-label">
+              {activePlate === "composite"
+                ? hiddenPlates.length === 0
+                  ? settings.grayscale ? "Grayscale proof (K)" : "Composite proof"
+                  : hiddenPlates.length === applicablePlates.length
+                    ? "Composite proof — all plates hidden"
+                    : `Composite proof — ${hiddenPlates
+                        .map((plate) => PLATE_META[plate].short)
+                        .join(", ")} hidden`
+                : settings.visible[activePlate]
+                  ? `${PLATE_META[activePlate].label} plate`
+                  : `${PLATE_META[activePlate].label} plate — hidden`}
+            </span>
+          </div>
+        </div>
+        </EditingSurface>
+      </div>
+
+      <div className="stage-footer">
+        <div className="quality-note">
+          <span className="status-dot" />
+          Preview uses your device. Nothing is uploaded.
+        </div>
+        <div className="zoom-controls">
+          <button
+            className="icon-button"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => setZoom((value) => Math.max(ZOOM_BOUNDS.min, value - 8))}
+          >
+            <ZoomOut size={17} />
+          </button>
+          {/* The numeric zoom field lives in the Proof drawer (selector
+              contract); the footer keeps the quick slider and buttons. */}
+          <input
+            type="range"
+            data-testid="zoom-slider"
+            min={ZOOM_BOUNDS.min}
+            max={ZOOM_BOUNDS.max}
+            value={zoom}
+            onChange={(event) => setZoom(Number(event.target.value))}
+            aria-label="Preview zoom"
+            aria-valuetext={`${zoom} percent`}
+            /* Shares the Proof drawer numeric-zoom field's unit + hint as its
+               description (selector contract: type-first zoom, slider for
+               drag adjustment). */
+            aria-describedby="numeric-zoom-unit numeric-zoom-hint"
+          />
+          <button
+            className="icon-button"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => setZoom((value) => Math.min(ZOOM_BOUNDS.max, value + 8))}
+          >
+            <ZoomIn size={17} />
+          </button>
+        </div>
+      </div>
+
+      {dragging && (
+        <div className="drop-overlay">
+          <Upload size={30} />
+          <strong>Drop artwork to begin</strong>
+          <span>PNG, JPG, or WebP</span>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <main
@@ -799,809 +1888,99 @@ export default function HalftoneStudio() {
       data-studio-root
       style={{ "--ink-active": activeInk } as CSSProperties}
     >
-      <header className="topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
-          <div>
-            <strong>{PRODUCT_NAME}</strong>
-            <span>{PRODUCT_TAGLINE}</span>
-          </div>
-        </div>
+      <StudioApiContext.Provider value={api}>
+        <ProjectUiContext.Provider value={projectUi}>
+          <WorkspaceShell canvas={canvasStage} />
 
-        <div className="project-title">
-          <FileImage size={15} />
-          <span>{sourceName}</span>
-          <span className="saved-state">
-            <Check size={12} /> Local session
-          </span>
-        </div>
-
-        <nav className="top-actions" aria-label="Application actions">
-          <button className="icon-button" title="Help" aria-label="Help">
-            <HelpCircle size={18} />
-          </button>
-          <button className="button secondary" onClick={() => fileRef.current?.click()}>
-            <FolderOpen size={16} /> Open artwork
-          </button>
-          <div className="export-wrap">
-            <button
-              className="button primary"
-              onClick={() => setExportOpen((current) => !current)}
-              disabled={exporting}
-            >
-              {exporting ? (
-                <ProcessLoader compact label="Preparing export" />
-              ) : (
-                <Download size={16} />
-              )}
-              {exporting ? "Preparing…" : "Export"}
-              <ChevronDown size={14} />
-            </button>
-            {exportOpen && (
-              <div className="export-menu">
-                <button onClick={() => exportArtwork("png")}>
-                  <MonitorUp size={17} />
-                  <span>
-                    <strong>Composite PNG</strong>
-                    <small>Ready for sharing and proofing</small>
-                  </span>
-                </button>
-                <button onClick={() => exportArtwork("svg")}>
-                  <MonitorUp size={17} />
-                  <span>
-                    <strong>Vector SVG plate package</strong>
-                    <small>CMYK or K SVGs in a folder ZIP</small>
-                  </span>
-                </button>
-                <button onClick={() => exportArtwork("jpg")}>
-                  <MonitorUp size={17} />
-                  <span>
-                    <strong>Composite JPG</strong>
-                    <small>Flattened JPEG proof</small>
-                  </span>
-                </button>
-                <button onClick={() => exportArtwork("tiff")}>
-                  <MonitorUp size={17} />
-                  <span>
-                    <strong>Composite TIFF</strong>
-                    <small>Uncompressed RGBA TIFF proof</small>
-                  </span>
-                </button>
-                <button onClick={() => exportArtwork("plates")}>
-                  <Layers3 size={17} />
-                  <span>
-                    <strong>{settings.grayscale ? "Grayscale K plate package" : "CMYK plate package"}</strong>
-                    <small>{settings.grayscale ? "One monochrome K PNG plate + settings" : "Four monochrome PNG plates + settings"}</small>
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
-        </nav>
-      </header>
-
-      <section
-        className={`workspace ${inspectorCollapsed ? "inspector-collapsed" : ""}`}
-      >
-        <aside
-          className={`inspector ${inspectorCollapsed ? "is-collapsed" : ""}`}
-          data-testid="inspector"
-          data-collapsed={inspectorCollapsed ? "true" : "false"}
-        >
-          <StageSpine
-            stages={stages}
-            active={activeStage}
-            onJump={jumpToStage}
-          />
-          <button
-            className="icon-button inspector-collapse-button"
-            title={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
-            aria-label={inspectorCollapsed ? "Expand panel" : "Collapse panel"}
-            aria-expanded={!inspectorCollapsed}
-            onClick={() => setInspectorCollapsed((current) => !current)}
-          >
-            {inspectorCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          </button>
-
-          <StagePanel
-            id="artwork"
-            number="01"
-            label="Artwork"
-            description="Confirm the source file before building the screen."
-            active={activeStage === "artwork"}
-            onReset={resetArtwork}
-          >
-            <button className="upload-card" onClick={() => fileRef.current?.click()}>
-              <span className="upload-icon">
-                <ImagePlus size={20} />
-              </span>
-              <span>
-                <strong>{sourceName}</strong>
-                <small>{sourceMeta}</small>
-              </span>
-              <span className="replace-label">Replace</span>
-            </button>
-            <div className="artwork-layout-controls">
-              <label className="select-field">
-                <span>Sheet size</span>
-                <select
-                  data-testid="artwork-sheet-size"
-                  value={documentSettings.sheetSize}
-                  onChange={(event) =>
-                    setDocumentSettings((current) => ({
-                      ...current,
-                      sheetSize: event.target.value as SheetSizeId,
-                    }))
-                  }
-                >
-                  {SHEET_SIZES.map((sheet) => (
-                    <option key={sheet.id} value={sheet.id}>
-                      {sheet.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="artwork-control-group">
-                <span className="artwork-control-label">Orientation</span>
-                <div className="segmented-control" role="group" aria-label="Orientation">
-                  {(["portrait", "landscape"] as const).map((orientation) => (
-                    <button
-                      key={orientation}
-                      type="button"
-                      data-testid={`artwork-orientation-${orientation}`}
-                      aria-pressed={documentSettings.orientation === orientation}
-                      onClick={() =>
-                        setDocumentSettings((current) => ({
-                          ...current,
-                          orientation,
-                        }))
-                      }
-                    >
-                      {titleCase(orientation)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <NumericField
-                id="artworkScale"
-                label="Scale"
-                value={documentSettings.scalePercent}
-                min={10}
-                max={400}
-                step={1}
-                unit="%"
-                defaultValue={DEFAULT_DOCUMENT_SETTINGS.scalePercent}
-                onChange={(scalePercent) =>
-                  setDocumentSettings((current) => ({
-                    ...current,
-                    scalePercent,
-                  }))
-                }
-              />
-
-              <div className="artwork-control-group">
-                <span className="artwork-control-label">Background</span>
-                <div className="segmented-control" role="group" aria-label="Background">
-                  {(["white", "black"] as const).map((background) => (
-                    <button
-                      key={background}
-                      type="button"
-                      data-testid={`artwork-background-${background}`}
-                      aria-pressed={documentSettings.background === background}
-                      onClick={() =>
-                        setDocumentSettings((current) => ({
-                          ...current,
-                          background,
-                        }))
-                      }
-                    >
-                      {titleCase(background)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="artwork-action-row">
-                <button
-                  type="button"
-                  data-testid="artwork-fit"
-                  onClick={() => {
-                    if (!source) return;
-                    const sourceWidth =
-                      source instanceof HTMLImageElement
-                        ? source.naturalWidth
-                        : source.width;
-                    const sourceHeight =
-                      source instanceof HTMLImageElement
-                        ? source.naturalHeight
-                        : source.height;
-                    const sheet = getSheetPixelDimensions(
-                      documentSettings.sheetSize,
-                      documentSettings.orientation,
-                    );
-                    setDocumentSettings((current) => ({
-                      ...current,
-                      scalePercent: getFitScalePercent(
-                        sourceWidth,
-                        sourceHeight,
-                        sheet.width,
-                        sheet.height,
-                      ),
-                    }));
-                  }}
-                >
-                  Fit
-                </button>
-              </div>
-
-              <label className="artwork-mirror-toggle">
-                <span>Mirror artwork</span>
-                <input
-                  type="checkbox"
-                  data-testid="artwork-mirror"
-                  checked={documentSettings.mirrorImage}
-                  onChange={(event) =>
-                    setDocumentSettings((current) => ({
-                      ...current,
-                      mirrorImage: event.target.checked,
-                    }))
-                  }
-                />
-              </label>
-
-              <div className="artwork-control-group">
-                <span className="artwork-control-label">Mirror direction</span>
-                <div
-                  className="segmented-control"
-                  role="group"
-                  aria-label="Mirror direction"
-                >
-                  {(["horizontal", "vertical"] as const).map((mirrorDirection) => (
-                    <button
-                      key={mirrorDirection}
-                      type="button"
-                      data-testid={`artwork-mirror-direction-${mirrorDirection}`}
-                      aria-pressed={
-                        documentSettings.mirrorDirection === mirrorDirection
-                      }
-                      disabled={!documentSettings.mirrorImage}
-                      onClick={() =>
-                        setDocumentSettings((current) => ({
-                          ...current,
-                          mirrorDirection,
-                        }))
-                      }
-                    >
-                      {titleCase(mirrorDirection)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </StagePanel>
-
-          <StagePanel
-            id="halftone-cmyk"
-            number="02"
-            label="Halftone / CMYK"
-            description="Set the dot geometry, CMYK angles, and plate mix."
-            active={activeStage === "halftone-cmyk"}
-            onReset={resetHalftoneCmyk}
-          >
-            <div className="halftone-cmyk-top-controls">
-              <label className="select-field">
-                <span>Dot shape</span>
-                <select
-                  value={settings.dotShape}
-                  onChange={(event) => {
-                    if (event.target.value === "custom") setCustomShapeOpen(true);
-                    else updateSetting("dotShape", event.target.value as HalftoneSettings["dotShape"]);
-                  }}
-                >
-                  <option value="round">Round</option>
-                  <option value="square">Square</option>
-                  <option value="diamond">Diamond</option>
-                  <option value="line">Line</option>
-                  <option value="triangle">Triangle</option>
-                  <option value="cross">Cross</option>
-                  <option value="circle-outline">Circle outline</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              <label className="select-field">
-                <span>Color mode</span>
-                <select value={settings.grayscale ? "grayscale" : "cmyk"}
-                  onChange={(event) => updateSetting("grayscale", event.target.value === "grayscale")}>
-                  <option value="cmyk">CMYK</option>
-                  <option value="grayscale">Grayscale (K)</option>
-                </select>
-              </label>
-              {settings.grayscale && (
-                <label className="toggle-row">
-                  <span>
-                    <strong>Invert grayscale</strong>
-                    <small>Invert the black and white image.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    data-testid="grayscale-invert"
-                    checked={settings.invert}
-                    onChange={(event) => updateSetting("invert", event.target.checked)}
-                  />
-                </label>
-              )}
-            </div>
-            {settings.customShape && (
-              <div className="custom-shape-current">
-                <span data-testid="current-custom-shape">{settings.customShape.filename}</span>
-                <button type="button" className="button secondary" onClick={() => setCustomShapeOpen(true)}>Replace SVG</button>
-              </div>
-            )}
-            <div className="halftone-cmyk-preview-row">
-              <div className="screen-angle-box">
-                <div className="halftone-cmyk-section-label">CMYK angles</div>
-                <span className="screen-angle-viewing" data-testid="active-plate-label">
-                  {activePlate === "composite" ? "Viewing: Composite" : `Viewing: ${PLATE_META[activePlate].label}`}
-                </span>
-                <InkRail
-                  activePlate={activePlate}
-                  settings={settings}
-                  onSolo={handleSolo}
-                  onToggleVisible={handleToggleVisible}
-                  onAngleChange={handleAngleChange}
-                />
-                <label className="select-field cmyk-preset-field">
-                  <span>CMYK presets</span>
-                  <select
-                    data-testid="cmyk-preset"
-                    defaultValue=""
-                    onChange={(event) => applyCmykPreset(event.target.value)}
-                  >
-                    <option value="" disabled>Select a CMYK preset</option>
-                    {CMYK_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>{preset.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="halftone-cmyk-header">
-              <div className="pattern-preview-card">
-                <div>
-                  <strong>Dot pattern</strong>
-                  <small>Live CMYK screen preview</small>
-                </div>
-                <button
-                  type="button"
-                  className="pattern-preview-button"
-                  onClick={cyclePatternPlate}
-                  title="Click to cycle the active plate"
-                  aria-label={`Dot pattern preview, viewing ${activePlate === "composite" ? "composite" : PLATE_META[activePlate].label}. Click to cycle plates.`}
-                >
-                  <canvas ref={patternPreviewRef} width={80} height={80} data-testid="cmyk-pattern-preview" aria-label="CMYK dot pattern preview" />
-                </button>
-              </div>
-            </div>
-            </div>
-            <div className="field-grid">
-              {settings.dotShape === "circle-outline" && (
-                <NumericField id="strokeWidth" label="Outline stroke" value={settings.strokeWidth ?? 1}
-                  min={0.25} max={10} step={0.01} unit="px" defaultValue={1}
-                  hint="Thickness inside the circle, in 240-DPI document pixels."
-                  onChange={(value) => updateSetting("strokeWidth", value)} />
-              )}
-              <NumericField
-                id="cellSize"
-                label="Cell size"
-                value={settings.cellSize}
-                min={3}
-                max={64}
-                step={1}
-                unit="px"
-                defaultValue={DEFAULT_SETTINGS.cellSize}
-                hint="At 240 DPI, 16 px yields about 15 LPI; 4 px yields about 60 LPI."
-                onChange={(value) => updateSetting("cellSize", value)}
-              />
-              <NumericField id="frayedXEdge" label="Frayed X edge" value={settings.frayedXEdge}
-                min={0} max={100} step={1} unit="px" defaultValue={0}
-                hint="Frays the left and right edges of the halftone field."
-                onChange={(value) => updateSetting("frayedXEdge", value)} />
-              <NumericField id="frayedYEdge" label="Frayed Y edge" value={settings.frayedYEdge}
-                min={0} max={100} step={1} unit="px" defaultValue={0}
-                hint="Frays the top and bottom edges of the halftone field."
-                onChange={(value) => updateSetting("frayedYEdge", value)} />
-            </div>
-          </StagePanel>
-
-          <StagePanel
-            id="diffusion"
-            number="03"
-            label="Diffusion"
-            description="Shape ink distribution with diffusion and glitch controls."
-            active={activeStage === "diffusion"}
-            onReset={resetDiffusion}
-          >
-            <label className="toggle-row">
-              <span>
-                <strong>Enable diffusion</strong>
-                <small>Quantize coverage with an error-diffusion texture.</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={settings.diffusionEnabled ?? false}
-                onChange={(event) => updateSetting("diffusionEnabled", event.target.checked)}
-              />
-            </label>
-            <div className="diffusion-section-label">Diffusion</div>
-            <div className="field-grid">
-              <label className="select-field">
-                <span>Algorithm</span>
-                <select
-                  value={settings.diffusionAlgorithm ?? "floyd-steinberg"}
-                  onChange={(event) => updateSetting("diffusionAlgorithm", event.target.value as HalftoneSettings["diffusionAlgorithm"])}
-                >
-                  <option value="none">None</option>
-                  <option value="floyd-steinberg">Floyd-Steinberg</option>
-                  <option value="jarvis-judice-ninke">Jarvis-Judice-Ninke</option>
-                  <option value="stucki">Stucki</option>
-                  <option value="burkes">Burkes</option>
-                  <option value="atkinson">Atkinson</option>
-                </select>
-              </label>
-              <label className="select-field">
-                <span>Modulation</span>
-                <select
-                  value={settings.diffusionModulation ?? "none"}
-                  onChange={(event) => updateSetting("diffusionModulation", event.target.value as HalftoneSettings["diffusionModulation"])}
-                >
-                  {(["none", "column", "row", "dispersed", "medium", "heavy", "circuit", "tilt", "grid"] as const).map((mode) => (
-                    <option key={mode} value={mode}>{titleCase(mode)}</option>
-                  ))}
-                </select>
-              </label>
-              <NumericField id="diffusionModStrength" label="Modulation strength" value={Math.round((settings.diffusionModStrength ?? 0.5) * 100)} min={0} max={100} step={1} unit="%" defaultValue={50} onChange={(value) => updateSetting("diffusionModStrength", value / 100)} />
-              <NumericField id="diffusionIntensity" label="Intensity" value={Math.round((settings.diffusionIntensity ?? 0.5) * 100)} min={0} max={100} step={1} unit="%" defaultValue={50} onChange={(value) => updateSetting("diffusionIntensity", value / 100)} />
-              <NumericField id="diffusionLevels" label="Levels" value={settings.diffusionLevels ?? 8} min={2} max={32} step={1} unit="" defaultValue={8} onChange={(value) => updateSetting("diffusionLevels", value)} />
-              <NumericField id="diffusionSharpenStrength" label="Sharpen strength" value={Math.round((settings.diffusionSharpenStrength ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionSharpenStrength", value / 100)} />
-              <NumericField id="diffusionSharpenRadius" label="Sharpen radius" value={settings.diffusionSharpenRadius ?? 1} min={1} max={10} step={1} unit="px" defaultValue={1} onChange={(value) => updateSetting("diffusionSharpenRadius", value)} />
-              <NumericField id="diffusionDenoise" label="Denoise / noise" value={Math.round((settings.diffusionDenoise ?? 0) * 100)} min={-100} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionDenoise", value / 100)} />
-            </div>
-          </StagePanel>
-
-          <StagePanel
-            id="output"
-            number="05"
-            label="Output / Registration"
-            description="Finish the plate package and press handoff."
-            active={activeStage === "output"}
-            onReset={resetOutput}
-            final
-          >
-            <label className="toggle-row">
-              <span>
-                <strong>Registration marks</strong>
-                <small>Include on proofs and plates</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={registration}
-                onChange={(event) => setRegistrationEnabled(event.target.checked)}
-              />
-            </label>
-            <label className="select-field">
-              <span>Registration layout</span>
-              <select
-                value={registrationMode}
-                disabled={!registration}
-                onChange={(event) => setRegistrationMode(event.target.value as "corners" | "centered")}
-              >
-                <option value="corners">Four corners</option>
-                <option value="centered">Top / bottom centered</option>
-              </select>
-            </label>
-            <NumericField id="registrationSize" label="Registration size" value={registrationSize} min={20} max={600} step={1} unit="px" defaultValue={120} onChange={setRegistrationSize} />
-            <NumericField id="registrationOffset" label="Registration offset" value={registrationOffset} min={10} max={1000} step={1} unit="px" defaultValue={120} onChange={setRegistrationOffset} />
-            <NumericField id="registrationWeight" label="Registration weight" value={registrationWeight} min={1} max={20} step={0.5} unit="px" defaultValue={2} onChange={setRegistrationWeight} />
-            <div className="registration-import-row">
-              <input ref={registrationFileRef} type="file" accept=".svg,image/svg+xml" hidden onChange={(event) => void onRegistrationFileChange(event)} />
-              <button type="button" className="button secondary" onClick={() => registrationFileRef.current?.click()}>
-                {registrationShape ? "Replace registration SVG" : "Import registration SVG"}
-              </button>
-              {registrationShape && <span>{registrationShape.filename}</span>}
-            </div>
-            <section className="preflight-card" aria-labelledby="preflight-title">
-              <header className="preflight-heading">
-                <span>
-                  <ClipboardCheck size={16} aria-hidden="true" />
-                  <strong id="preflight-title">Output preflight</strong>
-                </span>
-                <span data-testid="preflight-count">
-                  {preflightReviewCount === 0
-                    ? "No visible omissions"
-                    : `${preflightReviewCount} to review`}
-                </span>
-              </header>
-              <ul className="preflight-list">
-                <PreflightItem
-                  review={hiddenPlates.length > 0}
-                  label="Plate visibility"
-                  value={
-                    hiddenPlates.length === 0
-                      ? "4/4 enabled"
-                      : `${hiddenPlates
-                          .map((plate) => PLATE_META[plate].short)
-                          .join(", ")} hidden`
-                  }
-                />
-                <PreflightItem
-                  review={sharedAngleGroups.length > 0}
-                  label="Screen angles"
-                  value={
-                    sharedAngleGroups.length === 0
-                      ? settings.grayscale ? "Grayscale uses the K screen angle" : "All four angles are distinct"
-                      : sharedAngleGroups
-                          .map(
-                            ([angle, plates]) =>
-                              `${plates
-                                .map((plate) => PLATE_META[plate].short)
-                                .join("/")} share ${angle}°`,
-                          )
-                          .join(" · ")
-                  }
-                />
-                <PreflightItem
-                  review={!registration}
-                  label="Registration"
-                  value={registration ? "Marks included" : "Off — confirm before film"}
-                />
-                <PreflightItem
-                  review={settings.invert}
-                  label="Dot polarity"
-                  value={settings.invert ? "Inverted — confirm" : "Standard positive"}
-                />
-                <PreflightItem
-                  review={screenLoadIsDense}
-                  label="Screen load"
-                  value={
-                    screenLoad.plate
-                      ? `${screenLoad.marks.toLocaleString(
-                          "en-US",
-                        )} estimated marks/plate (${
-                          PLATE_META[screenLoad.plate].short
-                        } at ${settings.angles[screenLoad.plate]}°)`
-                      : "No enabled plates"
-                  }
-                />
-              </ul>
-              <button
-                type="button"
-                className="preflight-copy"
-                onClick={copyJobTicket}
-              >
-                <Copy size={14} aria-hidden="true" />
-                Copy job ticket
-              </button>
-            </section>
-          </StagePanel>
-
-          <StagePanel
-            id="glitch"
-            number="04"
-            label="Glitch"
-            description="Slice, warp, smear, corrupt, and sort the source field."
-            active={activeStage === "glitch"}
-            onReset={resetGlitch}
-          >
-            {!settings.diffusionEnabled ? <>
-              <div className="diffusion-section-label">Slice and warp</div>
-              <div className="field-grid">
-              <NumericField id="sliceShift" label="Slice shift" value={settings.sliceShift ?? 0} min={0} max={150} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("sliceShift", value)} />
-              <NumericField id="sliceSize" label="Slice size" value={settings.sliceSize ?? 20} min={2} max={200} step={1} unit="px" defaultValue={20} onChange={(value) => updateSetting("sliceSize", value)} />
-              <NumericField id="verticalSliceShift" label="Vertical slice shift" value={settings.verticalSliceShift ?? 0} min={0} max={150} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("verticalSliceShift", value)} />
-              <NumericField id="verticalSliceSize" label="Vertical slice size" value={settings.verticalSliceSize ?? 20} min={2} max={200} step={1} unit="px" defaultValue={20} onChange={(value) => updateSetting("verticalSliceSize", value)} />
-              <NumericField id="gridWarp" label="Grid warp" value={settings.gridWarp ?? 0} min={0} max={200} step={1} unit="px" defaultValue={0} onChange={(value) => updateSetting("gridWarp", value)} />
-              <NumericField id="warpScale" label="Warp scale" value={settings.warpScale ?? 100} min={10} max={500} step={1} unit="%" defaultValue={100} onChange={(value) => updateSetting("warpScale", value)} />
-              </div>
-            </> : <>
-              <div className="diffusion-section-label">Diffusion glitches</div>
-              <div className="field-grid">
-                <NumericField id="brokenKernel" label="Broken kernel" value={Math.round((settings.brokenKernel ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("brokenKernel", value / 100)} />
-                <NumericField id="directionalBias" label="Directional bias" value={Math.round((settings.directionalBias ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("directionalBias", value / 100)} />
-                <NumericField id="directionalBiasAngle" label="Bias angle" value={settings.directionalBiasAngle ?? 0} min={0} max={360} step={1} unit="°" defaultValue={0} onChange={(value) => updateSetting("directionalBiasAngle", value)} />
-                <NumericField id="errorOverflow" label="Error overflow" value={Math.round((settings.errorOverflow ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("errorOverflow", value / 100)} />
-                <NumericField id="diffusionReset" label="Diffusion reset" value={Math.round((settings.diffusionReset ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("diffusionReset", value / 100)} />
-                <NumericField id="crossChannelBleed" label="Cross-channel bleed" value={Math.round((settings.crossChannelBleed ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("crossChannelBleed", value / 100)} />
-              </div>
-            </>}
-            <div className="diffusion-section-label">Datamosh</div>
-            <div className="field-grid">
-              <NumericField id="smearDrag" label="Smear drag" value={Math.round((settings.smearDrag ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("smearDrag", value / 100)} />
-              <NumericField id="smearLength" label="Smear length" value={settings.smearLength ?? 24} min={4} max={120} step={1} unit="px" defaultValue={24} onChange={(value) => updateSetting("smearLength", value)} />
-              <label className="toggle-row"><span><strong>Vertical smear</strong><small>Drag smear along the Y axis.</small></span><input type="checkbox" checked={settings.smearVertical ?? false} onChange={(event) => updateSetting("smearVertical", event.target.checked)} /></label>
-              <NumericField id="macroblockCorrupt" label="Macroblock corrupt" value={Math.round((settings.macroblockCorrupt ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("macroblockCorrupt", value / 100)} />
-              <NumericField id="macroblockDropout" label="Dropout mix" value={Math.round((settings.macroblockDropout ?? 0.25) * 100)} min={0} max={100} step={1} unit="%" defaultValue={25} onChange={(value) => updateSetting("macroblockDropout", value / 100)} />
-              <NumericField id="blockShift" label="Block shift" value={Math.round((settings.blockShift ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("blockShift", value / 100)} />
-              <NumericField id="blockShiftSize" label="Block size" value={settings.blockShiftSize ?? 16} min={4} max={64} step={1} unit="px" defaultValue={16} onChange={(value) => updateSetting("blockShiftSize", value)} />
-              <NumericField id="channelDesync" label="Channel desync" value={Math.round((settings.channelDesync ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("channelDesync", value / 100)} />
-              <NumericField id="bitmapSort" label="Bitmap sort" value={Math.round((settings.bitmapSort ?? 0) * 100)} min={0} max={100} step={1} unit="%" defaultValue={0} onChange={(value) => updateSetting("bitmapSort", value / 100)} />
-              <label className="toggle-row"><span><strong>Vertical bitmap sort</strong><small>Sort along the Y axis.</small></span><input type="checkbox" checked={settings.bitmapSortVertical ?? false} onChange={(event) => updateSetting("bitmapSortVertical", event.target.checked)} /></label>
-            </div>
-          </StagePanel>
-        </aside>
-
-        <section
-          className={[
-            "canvas-stage",
-            dragging ? "dragging" : "",
-            spaceHeld ? "pan-armed" : "",
-            panning ? "panning" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          data-testid="stage-surface"
-          data-pan-armed={spaceHeld ? "true" : "false"}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={(event) => {
-            if (event.currentTarget === event.target) setDragging(false);
-          }}
-          onDrop={onDrop}
-          onPointerDown={(event) => {
-            if (!spaceHeld || event.button !== 0) return;
-            event.preventDefault();
-            panStart.current = {
-              x: event.clientX,
-              y: event.clientY,
-              panX: pan.x,
-              panY: pan.y,
-            };
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setPanning(true);
-          }}
-          onPointerMove={(event) => {
-            const start = panStart.current;
-            if (!start) return;
-            setPan({
-              x: start.panX + event.clientX - start.x,
-              y: start.panY + event.clientY - start.y,
-            });
-          }}
-          onPointerUp={(event) => {
-            if (!panStart.current) return;
-            panStart.current = null;
-            setPanning(false);
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId);
-            }
-          }}
-          onPointerCancel={() => {
-            panStart.current = null;
-            setPanning(false);
-          }}
-        >
-          <div className="stage-toolbar">
-            <div className="view-status">
-              <Sparkles size={14} />
-              <span>
-                {activeStage === "artwork" ? "Centered artwork proof · Space-drag pans" : "Live browser preview"}
-              </span>
-            </div>
-          </div>
-
-          <div className="stage-body">
-            <div className="canvas-scroll">
-              <div
-                className="artboard-wrap"
-                style={{
-                  width: `${zoom}%`,
-                  transform: `translate3d(${pan.x}px, ${pan.y}px, 0)`,
-                }}
-                onDoubleClick={() => setZoom(76)}
-              >
-                <canvas
-                  ref={canvasRef}
-                  data-testid="artwork-canvas"
-                  aria-label={settings.grayscale ? "Live grayscale halftone preview" : "Live CMYK halftone preview"}
-                />
-                <span className="artboard-label" data-testid="artboard-label">
-                  {activePlate === "composite"
-                    ? hiddenPlates.length === 0
-                      ? settings.grayscale ? "Grayscale proof (K)" : "Composite proof"
-                      : hiddenPlates.length === applicablePlates.length
-                        ? "Composite proof — all plates hidden"
-                        : `Composite proof — ${hiddenPlates
-                            .map((plate) => PLATE_META[plate].short)
-                            .join(", ")} hidden`
-                    : settings.visible[activePlate]
-                      ? `${PLATE_META[activePlate].label} plate`
-                      : `${PLATE_META[activePlate].label} plate — hidden`}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="stage-footer">
-            <div className="quality-note">
-              <span className="status-dot" />
-              Preview uses your device. Nothing is uploaded.
-            </div>
-            <div className="zoom-controls">
-              <button
-                className="icon-button"
-                aria-label="Zoom out"
-                title="Zoom out"
-                onClick={() => setZoom((value) => Math.max(35, value - 8))}
-              >
-                <ZoomOut size={17} />
-              </button>
-              <NumericField
-                id="zoom"
-                label="Zoom"
-                value={zoom}
-                min={35}
-                max={110}
-                step={1}
-                unit="%"
-                defaultValue={76}
-                showSlider={false}
-                hint="Changes only the proof view, never the exported artwork."
-                onChange={setZoom}
-              />
-              <input
-                type="range"
-                data-testid="zoom-slider"
-                min={35}
-                max={110}
-                value={zoom}
-                onChange={(event) => setZoom(Number(event.target.value))}
-                aria-label="Preview zoom"
-                aria-valuetext={`${zoom} percent`}
-                aria-describedby="numeric-zoom-unit numeric-zoom-hint"
-              />
-              <button
-                className="icon-button"
-                aria-label="Zoom in"
-                title="Zoom in"
-                onClick={() => setZoom((value) => Math.min(110, value + 8))}
-              >
-                <ZoomIn size={17} />
-              </button>
-            </div>
-          </div>
-
-          {dragging && (
-            <div className="drop-overlay">
-              <Upload size={30} />
-              <strong>Drop artwork to begin</strong>
-              <span>PNG, JPG, or WebP</span>
-            </div>
+          {dirtyGuard !== null && (
+            <DirtyWorkDialog
+              open
+              projectTitle={open.title}
+              actionLabel={dirtyGuard === "new" ? "start a new project" : "leave for Home"}
+              onChoice={onDirtyGuardChoice}
+            />
           )}
-        </section>
-      </section>
 
-      <div className="desktop-only" data-testid="desktop-only">
-        <p className="desktop-only-title">Open on a desktop</p>
-        <p className="desktop-only-body">
-          {PRODUCT_NAME} drives press separations at full resolution and needs a
-          pointer and a large canvas. Open this on a desktop browser.
-        </p>
-      </div>
+          {saveDialog !== null && (
+            <TextPromptDialog
+              title="Save Project"
+              fieldLabel="Project name"
+              submitLabel="Save"
+              initialValue={open.title === "Untitled" ? "" : open.title}
+              description={
+                <p>Projects stay on this device. Your account never syncs files.</p>
+              }
+              onSubmit={(name) => void onSaveDialogSubmit(name)}
+              onCancel={() => {
+                setSaveDialog(null);
+                restoreDialogInvoker();
+              }}
+            />
+          )}
+
+          {renameOpen && (
+            <TextPromptDialog
+              title="Rename Project"
+              fieldLabel="Project name"
+              submitLabel="Rename"
+              initialValue={open.title}
+              onSubmit={(name) => {
+                setRenameOpen(false);
+                void controller.renameOpenProject(name);
+                restoreDialogInvoker();
+              }}
+              onCancel={() => {
+                setRenameOpen(false);
+                restoreDialogInvoker();
+              }}
+            />
+          )}
+
+          {conflictOpen && (
+            <ChoiceDialog
+              title="Save Conflict"
+              description={
+                <p>
+                  Another tab saved a newer revision of this project. Reload to
+                  take that version (dropping this tab’s changes), or duplicate
+                  your current work as a new project.
+                </p>
+              }
+              choices={[
+                {
+                  label: "Reload",
+                  onChoose: () => {
+                    setConflictOpen(false);
+                    void controller.revertToLastSave();
+                  },
+                },
+                {
+                  label: "Duplicate",
+                  onChoose: () => {
+                    setConflictOpen(false);
+                    projectUi.duplicateReadonly();
+                  },
+                },
+              ]}
+              onCancel={() => setConflictOpen(false)}
+            />
+          )}
+        </ProjectUiContext.Provider>
+      </StudioApiContext.Provider>
 
       <input
         ref={fileRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,image/svg+xml"
         hidden
         onChange={onFileChange}
+      />
+      <input
+        ref={registrationFileRef}
+        type="file"
+        accept=".svg,image/svg+xml"
+        hidden
+        onChange={(event) => void onRegistrationFileChange(event)}
       />
 
       {notice && (
@@ -1614,98 +1993,59 @@ export default function HalftoneStudio() {
         </div>
       )}
 
-      <SessionBadge />
+      {snapshot.storageAlert && (
+        <div className="toast is-alert" role="alert">
+          {snapshot.storageAlert}
+          <button onClick={() => controller.clearStorageAlert()} aria-label="Dismiss storage alert">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {customShapeOpen && (
-        <CustomShapeDialog current={settings.customShape}
+        <CustomShapeDialog
+          current={settings.customShape}
           onCancel={() => setCustomShapeOpen(false)}
-          onApply={(customShape) => {
-            setSettings((current) => ({ ...current, dotShape: "custom", customShape }));
+          onApply={(shape) => {
             setCustomShapeOpen(false);
-            setNotice(`Custom shape loaded: ${customShape.filename}`);
-          }} />
+            void applyCustomShape(shape);
+          }}
+        />
       )}
     </main>
   );
+
+  async function applyCustomShape(shape: CustomShapeAsset) {
+    if (!primaryLayerId) {
+      setNotice("Import artwork before assigning a custom dot shape.");
+      return;
+    }
+    try {
+      const bytes = new TextEncoder().encode(shape.svg);
+      const record = await controller.assets.putBlob(
+        bytes,
+        "svg",
+        "image/svg+xml",
+        svgDimensions(shape.svg),
+      );
+      cache.primeCustomShape(record.sha256, shape);
+      apply(
+        {
+          type: "recipe/update-halftone",
+          layerId: primaryLayerId,
+          patch: { dotShape: "custom", customShapeAssetId: record.sha256 },
+        },
+        "Custom dot shape",
+      );
+      setNotice(`Custom shape loaded: ${shape.filename}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The custom SVG could not be stored.");
+    }
+  }
 }
 
-type StagePanelProps = {
-  id: StudioStageId;
-  number: string;
-  label: string;
-  description: string;
-  active: boolean;
-  final?: boolean;
-  onReset?: () => void;
-  children: ReactNode;
-};
-
-function StagePanel({
-  id,
-  number,
-  label,
-  description,
-  active,
-  final = false,
-  onReset,
-  children,
-}: StagePanelProps) {
-  return (
-    <section
-      className={`control-step ${final ? "final-step" : ""}`}
-      id={id}
-      role="tabpanel"
-      aria-labelledby={`stage-tab-${id}`}
-      data-testid={`stage-panel-${id}`}
-      hidden={!active}
-    >
-      <header className="control-step-heading">
-        <span className="step-number">{number}</span>
-        <span>
-          <strong>{label}</strong>
-          <small>{description}</small>
-        </span>
-        {onReset ? (
-          <button
-            type="button"
-            className="stage-reset-button"
-            aria-label={`Reset ${label} controls`}
-            title={`Reset ${label} controls`}
-            onClick={onReset}
-          >
-            <RotateCcw size={14} aria-hidden="true" />
-          </button>
-        ) : null}
-      </header>
-      <div className="control-step-body">{children}</div>
-    </section>
-  );
-}
-
-function PreflightItem({
-  review,
-  label,
-  value,
-}: {
-  review: boolean;
-  label: string;
-  value: string;
-}) {
-  return (
-    <li
-      className={review ? "needs-review" : ""}
-      data-status={review ? "review" : "clear"}
-    >
-      {review ? (
-        <AlertTriangle size={14} aria-hidden="true" />
-      ) : (
-        <Check size={14} aria-hidden="true" />
-      )}
-      <span>
-        <strong>{label}</strong>
-        <small>{value}</small>
-      </span>
-    </li>
-  );
+function serializePresetJson(preset: RecipePresetV1): string {
+  return JSON.stringify(preset, null, 2);
 }
 
 function cleanName(name: string) {
@@ -1723,49 +2063,4 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.download = filename;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function encodeRgbaTiff(canvas: HTMLCanvasElement) {
-  const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
-  if (!pixels) throw new Error("TIFF export could not read the rendered canvas");
-
-  const entryCount = 10;
-  const ifdOffset = 8;
-  const bitsOffset = ifdOffset + 2 + entryCount * 12 + 4;
-  const pixelOffset = bitsOffset + 8;
-  const buffer = new ArrayBuffer(pixelOffset + pixels.length);
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  view.setUint16(0, 0x4949, false);
-  view.setUint16(2, 42, true);
-  view.setUint32(4, ifdOffset, true);
-  view.setUint16(ifdOffset, entryCount, true);
-
-  let entry = ifdOffset + 2;
-  const writeEntry = (tag: number, type: number, count: number, value: number) => {
-    view.setUint16(entry, tag, true);
-    view.setUint16(entry + 2, type, true);
-    view.setUint32(entry + 4, count, true);
-    if (type === 3 && count === 1) view.setUint16(entry + 8, value, true);
-    else view.setUint32(entry + 8, value, true);
-    entry += 12;
-  };
-
-  writeEntry(256, 4, 1, canvas.width);
-  writeEntry(257, 4, 1, canvas.height);
-  writeEntry(258, 3, 4, bitsOffset);
-  writeEntry(259, 3, 1, 1);
-  writeEntry(262, 3, 1, 2);
-  writeEntry(273, 4, 1, pixelOffset);
-  writeEntry(277, 3, 1, 4);
-  writeEntry(278, 4, 1, canvas.height);
-  writeEntry(279, 4, 1, pixels.length);
-  writeEntry(284, 3, 1, 1);
-  view.setUint32(entry, 0, true);
-  view.setUint16(bitsOffset, 8, true);
-  view.setUint16(bitsOffset + 2, 8, true);
-  view.setUint16(bitsOffset + 4, 8, true);
-  view.setUint16(bitsOffset + 6, 8, true);
-  bytes.set(pixels, pixelOffset);
-  return buffer;
 }
