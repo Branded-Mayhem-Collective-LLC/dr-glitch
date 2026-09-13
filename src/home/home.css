@@ -1,0 +1,297 @@
+/**
+ * Home surface styles (ws-home). Cream paper ground per the proof-safe
+ * identity: square geometry, no gradients, semantic-only CMYK accents.
+ * Imported from HomeScreen so the surface styles itself wherever it mounts.
+ *
+ * Palette law (§3): only exact declared tokens. Former literals were
+ * retokenized 2026-09-12 — #fff → --paper, #5c574b → --ink-k (the system
+ * has no muted ink on paper; auth surfaces set all paper text in --ink-k),
+ * #b8b2a4 → --rule-soft, #ddd8cb → --paper-3, #e9e5da → --paper-2.
+ */
+
+.home-screen {
+  min-height: 100vh;
+  padding: 48px clamp(24px, 6vw, 96px);
+  background: var(--paper);
+  color: var(--ink-k);
+  font-family: "Archivo", sans-serif;
+}
+
+.home-header h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.home-storage-note {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  color: var(--ink-k);
+}
+
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.home-actions button {
+  padding: 9px 16px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.home-actions button:hover,
+.home-actions button[aria-pressed="true"] {
+  background: var(--ink-k);
+  color: var(--paper);
+}
+
+.home-screen h2 {
+  margin: 24px 0 10px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-k);
+}
+
+.home-notice {
+  padding: 8px 12px;
+  border: 1px solid var(--ink-m);
+  color: var(--ink-m);
+  font-size: 12.5px;
+}
+
+.home-empty {
+  font-size: 13px;
+  color: var(--ink-k);
+}
+
+.home-project-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.home-project-card {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-project-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--paper-3);
+}
+
+.home-project-thumb.is-blank {
+  background: var(--paper-2);
+}
+
+.home-project-title {
+  margin: 0;
+  font-size: 14.5px;
+}
+
+.home-unsaved-badge {
+  font-size: 10.5px;
+  color: var(--ink-m);
+  text-transform: uppercase;
+}
+
+.home-project-date {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-k);
+  font-family: "Martian Mono", ui-monospace, monospace;
+}
+
+.home-project-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.home-project-actions > button,
+.home-project-menu-wrap > button {
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.home-project-actions > button:hover,
+.home-project-menu-wrap > button:hover {
+  background: var(--ink-k);
+  color: var(--paper);
+}
+
+.home-project-menu-wrap {
+  position: relative;
+}
+
+.home-project-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  min-width: 160px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  display: grid;
+}
+
+.home-project-menu button {
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.home-project-menu button:hover {
+  background: var(--ink-k);
+  color: var(--paper);
+}
+
+.home-trash-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.home-trash-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-soft);
+  background: var(--paper);
+}
+
+.home-trash-title {
+  flex: 1;
+  font-size: 13px;
+}
+
+.home-trash-date {
+  font-size: 11px;
+  color: var(--ink-k);
+  font-family: "Martian Mono", ui-monospace, monospace;
+}
+
+.home-trash-row button,
+[data-testid="ws-trash"] > button {
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.home-trash-row button:hover,
+[data-testid="ws-trash"] > button:hover {
+  background: var(--ink-k);
+  color: var(--paper);
+}
+
+/* Home-hosted dialogs reuse the studio dialog frame on paper ground.
+   Scoped to the PORTAL scrim class (.home-dialog-scrim, passed by the home
+   dialogs), not .home-screen: ModalDialog portals to document.body, so a
+   .home-screen-scoped selector never matched and the dialogs fell back to
+   the dark studio theme. */
+.home-dialog-scrim .confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 300;
+  min-width: 340px;
+  max-width: 440px;
+  padding: 18px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+}
+
+.home-dialog-scrim .confirm-dialog input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.home-dialog-scrim .confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.home-dialog-scrim .confirm-dialog-actions button {
+  padding: 7px 14px;
+  border: 1px solid var(--rule);
+  background: none;
+  color: var(--ink-k);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.home-dialog-scrim .confirm-dialog-actions button:hover {
+  background: var(--ink-k);
+  color: var(--paper);
+}
+
+/* Cancellable .drglitch import progress (wave F seam). */
+.home-import-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  color: var(--ink-k);
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.home-import-progress button {
+  padding: 5px 10px;
+  border: 1px solid var(--rule);
+  background: none;
+  color: var(--ink-k);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.home-import-progress button:hover {
+  background: var(--ink-k);
+  color: var(--paper);
+}

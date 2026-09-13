@@ -204,40 +204,89 @@ select:focus-visible {
   background: var(--shell);
 }
 
-.desktop-only {
+/*
+ * Size gate — below 1280×800 only the EDITOR AREA is replaced by a notice.
+ * The topbar stays, and the gated regions are display:none (still mounted),
+ * so project and workspace layout state are fully preserved. No automatic
+ * collapsing ever happens.
+ */
+.ws-size-gate {
   display: none;
 }
 
-@media (max-width: 900px) {
-  .studio-shell > :not(.desktop-only) {
+@media (max-width: 1279px), (max-height: 799px) {
+  .ws-main > :not(.ws-size-gate) {
     display: none !important;
   }
 
-  .desktop-only {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
+  .ws-size-gate {
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: 8px;
     padding: 24px;
+    grid-column: 1 / -1;
     background: var(--paper);
     color: var(--ink-k);
   }
+}
 
-  .desktop-only-title {
-    margin: 0;
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 20px;
-  }
+.desktop-only-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+}
 
-  .desktop-only-body {
-    max-width: 40ch;
-    margin: 0;
-    font-size: 14px;
-  }
+.desktop-only-body {
+  max-width: 40ch;
+  margin: 0;
+  font-size: 14px;
+}
+
+.mode-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mode-fieldset:disabled,
+.numeric-field.is-disabled {
+  opacity: 0.55;
+}
+
+.control-state-note {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.proof-contract {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.proof-contract span {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+}
+
+.preflight-review-action {
+  margin-left: auto;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  padding: 2px 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
 }
 
 .topbar {
@@ -1701,6 +1750,14 @@ select:focus-visible {
   display: block;
 }
 
+/* Transparent artboard: the proof canvas carries REAL alpha, so the wrap's
+   ground shows through uncovered pixels. A distinct neutral stage token
+   makes "no paper" visibly different from white paper — flat declared
+   color, no checkerboard (palette law: no gradients). */
+.artboard-wrap[data-background="transparent"] {
+  background: var(--stage-2);
+}
+
 .artboard-label {
   position: absolute;
   bottom: -24px;
@@ -2065,13 +2122,16 @@ select:focus-visible {
   cursor: pointer;
 }
 
+/* Reduced motion zeroes every duration outright (not 0.01ms): the
+   workspace-chrome contract asserts computed transition-duration === 0s,
+   and nothing in the app waits on transitionend/animationend. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
     animation-iteration-count: 1 !important;
   }
 }
@@ -2910,5 +2970,803 @@ select:focus-visible {
   .session-badge {
     left: 8px;
     bottom: 8px;
+  }
+}
+
+/* ================================================================== */
+/* WORKSTATION SHELL (2026-09-12)                                      */
+/* 48px topbar · 52px permanent rail · canvas · splitter · right dock  */
+/* with fixed drawers above the docked panel · in-app floats.          */
+/* Chrome stays achromatic; --ink-active appears only where it means   */
+/* "the soloed plate" (global focus ring), never as decoration.        */
+/* ================================================================== */
+
+.ws-root {
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  height: 100dvh;
+  background: var(--stage);
+}
+
+/* ----- top command bar (48px) ----- */
+
+.ws-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--stage);
+  position: relative;
+  z-index: 30;
+}
+
+.ws-topbar .brand-lockup {
+  gap: 8px;
+}
+
+.ws-topbar .brand-mark {
+  width: 24px;
+  height: 24px;
+}
+
+.ws-topbar .brand-lockup strong {
+  font-size: 13px;
+}
+
+.ws-project-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--paper-3);
+  font-size: 12px;
+}
+
+.ws-project-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-project-status {
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ws-topbar-group {
+  display: flex;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.ws-topbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--paper-3);
+  cursor: pointer;
+}
+
+.ws-topbar-button:hover:not(:disabled) {
+  border-color: var(--line);
+  color: var(--paper);
+}
+
+.ws-topbar-button[aria-pressed="true"] {
+  border-color: var(--rule-soft);
+  background: var(--stage-2);
+  color: var(--paper);
+}
+
+.ws-topbar-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ws-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ws-topbar-account .session-badge {
+  position: static;
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
+/* ----- main region ----- */
+
+.ws-main {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 6px auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ws-root[data-focus-mode="true"] .ws-main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ----- left tool rail (52px, 40px+ targets) ----- */
+
+.ws-rail {
+  display: flex;
+  flex-direction: column;
+  width: 52px;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--stage);
+}
+
+.ws-rail-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.ws-rail-group-system {
+  margin-top: auto;
+}
+
+.ws-rail-separator {
+  width: 28px;
+  margin: 0 auto 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.ws-rail-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--paper-3);
+  cursor: pointer;
+}
+
+.ws-rail-button:hover {
+  border-color: var(--line);
+  color: var(--paper);
+}
+
+/* Active = full inversion; state never carried by hue alone. */
+.ws-rail-button.is-active {
+  border-color: var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+}
+
+.ws-rail-button[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ----- canvas column ----- */
+
+.ws-canvas {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ws-canvas > .canvas-stage {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ----- splitter ----- */
+
+.ws-splitter {
+  width: 6px;
+  min-height: 0;
+  background: var(--stage);
+  border-left: 1px solid var(--line);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ws-splitter:hover,
+.ws-splitter:focus-visible {
+  background: var(--stage-2);
+}
+
+/* Focus ring parity for non-form-control focus targets in the shell. */
+.ws-splitter:focus-visible,
+.ws-panel:focus-visible,
+.ws-float:focus-visible {
+  outline: 2px solid var(--ink-active);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--ink-k);
+}
+
+.ws-splitter[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* ----- right dock ----- */
+
+.ws-dock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 320px;
+  max-width: 520px;
+  border-left: 1px solid var(--line);
+  background: var(--stage);
+}
+
+/* Fixed drawers stay above the independently scrolling panel below. */
+.ws-drawers {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 55%;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+/* Collapsed drawers never shrink below their 40px toggle — otherwise the
+   container's max-height flex-squashes them and neighbouring toggles
+   overlap, intercepting each other's clicks. Only the expanded drawer
+   (the one with a mounted body) flexes; its body scrolls independently. */
+.ws-drawer {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.ws-drawer:has(.ws-drawer-body) {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.ws-drawer-heading {
+  flex: none;
+}
+
+.ws-drawer + .ws-drawer {
+  border-top: 1px solid var(--line);
+}
+
+.ws-drawer-heading {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.ws-drawer-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  background: var(--stage);
+  color: var(--paper-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ws-drawer-toggle:hover,
+.ws-drawer-toggle[aria-expanded="true"] {
+  color: var(--paper);
+}
+
+.ws-drawer-state {
+  font-size: 12px;
+}
+
+.ws-drawer-body {
+  min-height: 0;
+  padding: 12px;
+  border-top: 1px solid var(--stage-rule);
+  overflow-y: auto;
+}
+
+.ws-drawer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ws-drawer-fact {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ws-dock-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ws-dock-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ----- panel frames (docked and floating) ----- */
+
+.ws-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--stage-2);
+}
+
+.ws-panel.is-docked {
+  flex: 1;
+}
+
+/* Floating window container: positions the panel and hosts the handles. */
+.ws-float {
+  position: absolute;
+  display: flex;
+}
+
+.ws-panel.is-floating {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--rule-soft);
+  outline: 1px solid var(--ink-k);
+}
+
+.ws-panel.is-floating.is-focused {
+  border-color: var(--paper-3);
+}
+
+.ws-panel-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--stage);
+  touch-action: none;
+}
+
+.ws-panel-titlebar[data-grabbable="true"] {
+  cursor: grab;
+}
+
+.ws-panel-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--paper-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ws-panel.is-focused .ws-panel-title {
+  color: var(--paper);
+}
+
+.ws-panel-titlebar-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.ws-titlebar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--paper-3);
+  cursor: pointer;
+}
+
+.ws-titlebar-button:hover:not(:disabled) {
+  border-color: var(--line);
+  color: var(--paper);
+}
+
+.ws-titlebar-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ws-panel-menu-wrap {
+  position: relative;
+}
+
+.ws-panel-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+}
+
+.ws-panel-menu button {
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--paper-2);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-panel-menu button:last-child {
+  border-bottom: 0;
+}
+
+.ws-panel-menu button:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--paper-2);
+}
+
+.ws-panel-menu button:disabled,
+.ws-panel-menu button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ws-panel-kb-hint {
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-k);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ws-panel-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.ws-panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 8-direction resize handles (floating, unlocked only) */
+
+.ws-resize-handle {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.ws-resize-n { top: -3px; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.ws-resize-s { bottom: -3px; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.ws-resize-e { right: -3px; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.ws-resize-w { left: -3px; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.ws-resize-ne { top: -4px; right: -4px; width: 12px; height: 12px; cursor: nesw-resize; }
+.ws-resize-sw { bottom: -4px; left: -4px; width: 12px; height: 12px; cursor: nesw-resize; }
+.ws-resize-nw { top: -4px; left: -4px; width: 12px; height: 12px; cursor: nwse-resize; }
+.ws-resize-se { bottom: -4px; right: -4px; width: 12px; height: 12px; cursor: nwse-resize; }
+
+/* ----- layers panel ----- */
+
+.ws-layer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+}
+
+.ws-layer-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.ws-layer-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  color: var(--paper-3);
+}
+
+.ws-layer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ws-layer-state {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ----- export panel ----- */
+
+.ws-export-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ws-export-targets .button {
+  justify-content: flex-start;
+}
+
+/* ----- help dialog ----- */
+
+.ws-help-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Scrim: the declared --rule token dimmed via element opacity (same idiom
+   as .custom-shape-dialog::backdrop). The palette law (§3) permits only
+   exact declared, fully opaque color values, so no rgba() scrims. */
+.ws-help-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--rule);
+  opacity: 0.65;
+}
+
+.ws-help {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+}
+
+.ws-help .ws-titlebar-button {
+  color: var(--ink-k);
+}
+
+.ws-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ws-help-search {
+  display: block;
+  padding: 12px 14px 0;
+}
+
+.ws-help-search input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-k);
+}
+
+.ws-help-body {
+  min-height: 0;
+  padding: 0 14px 14px;
+  overflow-y: auto;
+}
+
+.ws-help-body h3 {
+  margin: 16px 0 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ws-help-body dl {
+  margin: 0;
+}
+
+.ws-help-body dl > div {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--paper-2);
+}
+
+.ws-help-body dt {
+  min-width: 130px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.ws-help-body dd {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ws-help-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ----- dev component lab (never routed in production builds) ----- */
+
+.ws-lab {
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.ws-lab-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.ws-lab-header h1 {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: 20px;
+}
+
+.ws-lab-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ws-lab-section h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-3);
+}
+
+.ws-lab-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 8px;
+}
+
+.ws-lab-grid figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 4px;
+  border: 1px solid var(--line);
+  color: var(--paper-3);
+}
+
+.ws-lab-grid figcaption {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  word-break: break-all;
+  text-align: center;
+}
+
+.ws-lab-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ws-lab-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ws-lab-panel-sample {
+  position: static;
+  max-width: 380px;
+}
+
+.ws-lab-drawers {
+  max-width: 380px;
+  border: 1px solid var(--line);
+}
+
+.ws-lab-splitter {
+  height: 80px;
+}
+
+/* ----- motion ----- */
+
+.ws-rail-button,
+.ws-topbar-button,
+.ws-titlebar-button,
+.ws-drawer-toggle {
+  transition: background-color 80ms steps(2, end), color 80ms steps(2, end);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-rail-button,
+  .ws-topbar-button,
+  .ws-titlebar-button,
+  .ws-drawer-toggle {
+    transition: none;
   }
 }

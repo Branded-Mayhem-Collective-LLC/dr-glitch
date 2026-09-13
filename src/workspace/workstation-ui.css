@@ -1,0 +1,817 @@
+/**
+ * Styles for the project-wiring surfaces: home screen, project dialogs,
+ * recovery banner, topbar status, layers/history/presets sections. Lives
+ * beside the components that own it (imported from HalftoneStudio and
+ * HomeScreen); uses only tokens from globals.css — cream/neutral chrome,
+ * square geometry, no gradients, semantic-only CMYK.
+ */
+
+/* ----- dialogs ----- */
+
+.ws-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+}
+
+/* Scrim: declared --rule token dimmed via element opacity (palette law §3
+   permits only exact declared, fully opaque colors — no rgba scrims). */
+.ws-dialog-scrim::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--rule);
+  opacity: 0.55;
+}
+
+.confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 310;
+  min-width: 340px;
+  max-width: 440px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
+  font-family: var(--font-ui);
+}
+
+.ws-dialog-scrim .confirm-dialog {
+  position: static;
+  transform: none;
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.confirm-dialog p {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.confirm-dialog input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--stage);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.confirm-dialog-actions button {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  background: var(--stage);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.confirm-dialog-actions button:hover {
+  border-color: var(--fg);
+}
+
+.confirm-dialog-actions button.is-destructive {
+  border-color: var(--ink-m);
+  color: var(--ink-m);
+}
+
+/* ----- topbar project status ----- */
+
+.ws-project-name {
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-project-name:hover {
+  text-decoration: underline;
+}
+
+/* §3 hazard / §9: yellow never carries text — it may only appear as a
+   background behind --ink-k. The dirty state is therefore a K-on-Y chip. */
+.ws-dirty-indicator {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  background: var(--ink-y);
+  color: var(--ink-k);
+  white-space: nowrap;
+}
+
+.ws-recovery-status {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ws-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--ink-c);
+  color: var(--ink-c);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.ws-readonly-badge button {
+  border: 1px solid currentColor;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+/* ----- recovery banner ----- */
+
+.ws-recovery-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--stage-2);
+  color: var(--fg);
+  font-size: 12.5px;
+}
+
+.ws-recovery-banner span {
+  color: var(--muted);
+}
+
+.ws-recovery-banner button {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  background: var(--stage);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ws-recovery-banner button:hover {
+  border-color: var(--fg);
+}
+
+/* ----- layers panel ----- */
+
+.ws-layer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ws-layer-toolbar button {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  background: var(--stage);
+  color: var(--fg);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.ws-layer-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ws-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.ws-layer-row.is-selected {
+  border-color: var(--fg);
+}
+
+.ws-layer-row .ws-layer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-layer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ws-layer-controls button {
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font-size: 10.5px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.ws-layer-controls button[aria-pressed="true"] {
+  color: var(--fg);
+}
+
+.ws-layer-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+  font-size: 12px;
+}
+
+/* ----- history / snapshots ----- */
+
+.ws-panel-section-title {
+  margin: 10px 0 6px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ws-history-list {
+  margin: 0;
+  padding-left: 18px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ws-snapshot-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ws-snapshot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+}
+
+.ws-snapshot-row .ws-snapshot-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-snapshot-row .ws-snapshot-date {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.ws-snapshot-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.ws-snapshot-actions button,
+.ws-preset-actions button {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: var(--stage);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ws-snapshot-actions button:disabled,
+.ws-preset-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ----- presets ----- */
+
+.ws-presets {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.ws-preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* ----- storage alert toast ----- */
+
+.toast.is-alert {
+  border-color: var(--ink-m);
+}
+
+/* ----- editor UI: rulers, guides, transform/crop/perspective overlays ----- */
+
+.ws-editing-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.ws-editing-surface.has-rulers {
+  grid-template-columns: var(--ws-ruler-size, 22px) 1fr;
+  grid-template-rows: var(--ws-ruler-size, 22px) 1fr;
+}
+
+.ws-editing-content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  grid-column: -2 / -1;
+  grid-row: -2 / -1;
+}
+
+/* Ruler chrome uses only declared stage tokens (§3 palette law): stage-2
+   ground, stage-rule hairlines/minor ticks, rule-soft major ticks/labels. */
+.ws-ruler-corner {
+  grid-column: 1 / 2;
+  grid-row: 1 / 2;
+  display: grid;
+  place-items: center;
+  background: var(--stage-2);
+  color: var(--rule-soft);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-right: 1px solid var(--stage-rule);
+  border-bottom: 1px solid var(--stage-rule);
+  user-select: none;
+}
+
+.ws-ruler {
+  position: relative;
+  overflow: hidden;
+  background: var(--stage-2);
+  user-select: none;
+  touch-action: none;
+}
+
+.ws-ruler.is-horizontal {
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+  border-bottom: 1px solid var(--stage-rule);
+  cursor: row-resize;
+}
+
+.ws-ruler.is-vertical {
+  grid-column: 1 / 2;
+  grid-row: 2 / 3;
+  border-right: 1px solid var(--stage-rule);
+  cursor: col-resize;
+}
+
+.ws-ruler-tick {
+  position: absolute;
+  background: var(--stage-rule);
+  pointer-events: none;
+}
+
+.ws-ruler.is-horizontal .ws-ruler-tick {
+  bottom: 0;
+  width: 1px;
+  height: 5px;
+}
+
+.ws-ruler.is-horizontal .ws-ruler-tick.is-major {
+  height: 10px;
+  background: var(--rule-soft);
+}
+
+.ws-ruler.is-vertical .ws-ruler-tick {
+  right: 0;
+  height: 1px;
+  width: 5px;
+}
+
+.ws-ruler.is-vertical .ws-ruler-tick.is-major {
+  width: 10px;
+  background: var(--rule-soft);
+}
+
+.ws-ruler-label {
+  position: absolute;
+  color: var(--rule-soft);
+  font-family: var(--mono, monospace);
+  font-size: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ws-ruler.is-horizontal .ws-ruler-label {
+  left: 2px;
+  bottom: 9px;
+}
+
+.ws-ruler.is-vertical .ws-ruler-label {
+  right: 7px;
+  top: 1px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.ws-guide-drag-preview {
+  position: absolute;
+  z-index: 40;
+  pointer-events: none;
+  background: var(--ink-c);
+}
+
+.ws-guide-drag-preview.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.ws-guide-drag-preview.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* Overlay root sits over the canvas inside artboard-wrap. */
+.ws-artboard-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.ws-artboard-overlays.is-interactive {
+  pointer-events: auto;
+}
+
+/* Configurable grid overlay (Document drawer "Grid"). Never exported. */
+.ws-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.ws-grid path {
+  stroke: var(--rule-soft);
+}
+
+.ws-grid rect {
+  opacity: 0.45;
+}
+
+.ws-guide {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.ws-guide.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  transform: translateX(-3.5px);
+  cursor: col-resize;
+}
+
+.ws-guide.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 7px;
+  transform: translateY(-3.5px);
+  cursor: row-resize;
+}
+
+.ws-guide::before {
+  content: "";
+  position: absolute;
+  background: var(--ink-c);
+}
+
+.ws-guide.is-vertical::before {
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.ws-guide.is-horizontal::before {
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.ws-guide.is-locked {
+  cursor: default;
+}
+
+.ws-guide:focus-visible {
+  outline: none;
+}
+
+.ws-guide:focus-visible::before {
+  background: var(--ink-m);
+  box-shadow: 0 0 0 1px var(--ink-k);
+}
+
+.ws-snap-line {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.ws-snap-line.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--ink-m);
+}
+
+.ws-snap-line.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed var(--ink-m);
+}
+
+.ws-transform-box {
+  position: absolute;
+  /* Declared token (was undeclared #1f6fe0); snap-line precedent uses
+     process inks for on-proof editing affordances. */
+  border: 1px solid var(--ink-c);
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ws-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+  z-index: 25;
+}
+
+.ws-transform-box .ws-handle {
+  transform: translate(-50%, -50%);
+}
+
+.ws-handle-nw { left: 0; top: 0; cursor: nwse-resize; }
+.ws-handle-n { left: 50%; top: 0; cursor: ns-resize; }
+.ws-handle-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ws-handle-e { left: 100%; top: 50%; cursor: ew-resize; }
+.ws-handle-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.ws-handle-s { left: 50%; top: 100%; cursor: ns-resize; }
+.ws-handle-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.ws-handle-w { left: 0; top: 50%; cursor: ew-resize; }
+
+.ws-handle-rotate {
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -28px);
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.ws-crop-svg,
+.ws-perspective-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 20;
+  overflow: visible;
+}
+
+.ws-crop-source {
+  fill: none;
+  stroke: #85868a;
+  stroke-dasharray: 6 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.ws-crop-rect {
+  fill: color-mix(in srgb, var(--ink-c) 8%, transparent);
+  stroke: var(--ink-c);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.ws-perspective-quad {
+  fill: none;
+  stroke: var(--ink-c);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.ws-perspective-quad.is-invalid {
+  /* Invalid state: declared magenta ink (undeclared red retired). */
+  stroke: var(--ink-m);
+  stroke-dasharray: 4 3;
+}
+
+.ws-crop-handle,
+.ws-perspective-handle {
+  transform: translate(-50%, -50%);
+}
+
+.ws-perspective-handle {
+  border-radius: 50%;
+}
+
+/* ----- Document drawer: custom size + alignment grid ----- */
+
+.ws-custom-size-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ws-custom-size-row input {
+  width: 72px;
+  padding: 5px 6px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+.control-state-note.is-error {
+  /* §3 hazard convention: error states render K on Y, never a red literal. */
+  color: var(--ink-k);
+  background: var(--ink-y);
+  padding: 2px 6px;
+}
+
+.ws-align-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ws-align-grid button {
+  font-size: 10px;
+  padding: 6px 4px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ----- export panel: radio rows, progress, warning list ----- */
+
+.ws-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ws-radio-row input[type="radio"] {
+  accent-color: var(--fg, #1b1c1e);
+}
+
+.ws-radio-row input[type="radio"]:disabled + span {
+  opacity: 0.45;
+}
+
+.ws-export-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ws-export-progress {
+  flex: 1;
+  height: 8px;
+  background: var(--line, #d8d5cc);
+  position: relative;
+  overflow: hidden;
+}
+
+.ws-export-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--fg, #1b1c1e);
+  transition: width 120ms linear;
+}
+
+.ws-warning-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+}
+
+.ws-warning-list li {
+  margin-bottom: 6px;
+}
+
+/* ----- Quick export (legacy topbar Export menu contract) ----- */
+
+.ws-quick-export {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ws-quick-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-quick-export-item:hover:not(:disabled) {
+  border-color: var(--rule-soft);
+}
+
+.ws-quick-export-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ws-quick-export-item span {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-quick-export-item small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.preflight-list li[data-severity="block"] {
+  /* §3 hazard convention: blocked findings read K on Y. */
+  color: var(--ink-k);
+  background: var(--ink-y);
+}

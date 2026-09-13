@@ -4,7 +4,7 @@ import {
   clamp,
   coverageFor,
   estimateGridPoints,
-  applyDiffusion,
+  buildDiffusionField,
   rgbToCmyk,
   type HalftoneSettings,
 } from "../../src/studio/halftone";
@@ -90,19 +90,46 @@ describe("coverageFor", () => {
   });
 });
 
-describe("applyDiffusion", () => {
-  const diffusion = { ...base, diffusionEnabled: true, diffusionIntensity: 1, diffusionLevels: 4 };
+function pixels(values: number[], width: number): ImageData {
+  const data = new Uint8ClampedArray(values.flatMap((value) => [value, value, value, 255]));
+  return { data, width, height: values.length / width, colorSpace: "srgb" } as ImageData;
+}
 
-  it("changes output when the selected algorithm changes", () => {
-    const floyd = applyDiffusion(0.5, 3, 4, { ...diffusion, diffusionAlgorithm: "floyd-steinberg" });
-    const burkes = applyDiffusion(0.5, 3, 4, { ...diffusion, diffusionAlgorithm: "burkes" });
-    expect(floyd).not.toBe(burkes);
+function variance(values: Float32Array) {
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+}
+
+describe("buildDiffusionField", () => {
+  const diffusion = { ...base, diffusionEnabled: true, diffusionIntensity: 1, diffusionLevels: 4 };
+  const gradient = pixels([16, 48, 80, 112, 144, 176, 208, 240, 32, 64, 96, 128, 160, 192, 224, 248], 4);
+
+  it("treats None as quantization without Floyd-Steinberg propagation", () => {
+    const flat = pixels(Array.from({ length: 64 }, () => 140), 8);
+    const none = buildDiffusionField(flat, "black", { ...diffusion, diffusionLevels: 2, diffusionAlgorithm: "none" });
+    const floyd = buildDiffusionField(flat, "black", { ...diffusion, diffusionLevels: 2, diffusionAlgorithm: "floyd-steinberg" });
+    expect([...none]).not.toEqual([...floyd]);
   });
 
-  it("uses sharpen radius as part of the sharpening response", () => {
-    const narrow = applyDiffusion(0.35, 3, 4, { ...diffusion, diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 1 });
-    const wide = applyDiffusion(0.35, 3, 4, { ...diffusion, diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 8 });
-    expect(narrow).not.toBe(wide);
+  it("connects sharpen radius to the production field", () => {
+    const narrow = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 1 });
+    const wide = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionSharpenStrength: 0.8, diffusionSharpenRadius: 3 });
+    expect([...narrow]).not.toEqual([...wide]);
+  });
+
+  it("smooths for positive denoise and adds deterministic noise for negative values", () => {
+    const noisy = pixels([96, 160, 96, 160, 160, 96, 160, 96, 96, 160, 96, 160, 160, 96, 160, 96], 4);
+    const smooth = buildDiffusionField(noisy, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionLevels: 32, diffusionDenoise: 1 });
+    const added = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionLevels: 32, diffusionDenoise: -1 });
+    const repeated = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionLevels: 32, diffusionDenoise: -1 });
+    expect(variance(smooth)).toBeLessThan(variance(buildDiffusionField(noisy, "black", { ...diffusion, diffusionAlgorithm: "none", diffusionLevels: 32 })));
+    expect([...added]).toEqual([...repeated]);
+  });
+
+  it("applies datamosh before diffusion", () => {
+    const plain = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none" });
+    const shifted = buildDiffusionField(gradient, "black", { ...diffusion, diffusionAlgorithm: "none", blockShift: 1, blockShiftSize: 4 });
+    expect([...plain]).not.toEqual([...shifted]);
   });
 });
 

@@ -1,0 +1,4 @@
+/*
+  Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff

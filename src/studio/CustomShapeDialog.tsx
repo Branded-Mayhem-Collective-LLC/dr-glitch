@@ -61,7 +61,12 @@ export default function CustomShapeDialog({ current, onApply, onCancel }: Props)
   }
 
   return (
-    <dialog ref={dialog} className="custom-shape-dialog" aria-labelledby="custom-shape-title"
+    // aria-modal is explicit (native showModal() is modal but does not stamp
+    // the attribute): the centralized shortcut hook keys suppression off
+    // [aria-modal="true"], so EVERY global workstation shortcut is inert
+    // while this dialog is open.
+    <dialog ref={dialog} className="custom-shape-dialog" aria-modal="true"
+      aria-labelledby="custom-shape-title"
       aria-describedby="custom-shape-description"
       onKeyDown={(event) => {
         if (event.key !== "Tab" || event.shiftKey) return;

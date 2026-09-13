@@ -141,6 +141,7 @@ npx playwright install chromium
 npm run test:e2e
 npm run lint
 npm run build
+node --test tests/canary/guest-canary-guards.test.mjs
 ```
 
 Open `http://127.0.0.1:4343` in a desktop browser. Use the sample immediately
@@ -158,8 +159,16 @@ The hosted authentication paths require the D1 and Better Auth configuration in
 `wrangler.toml`. For local accounts, create an ignored `.dev.vars` from
 `.dev.vars.example`, supply a random local secret, and apply local migrations.
 See [deployment and verification](docs/deployment.md) for exact commands, the
-managed-host preview/tunnel route, and production release ordering. The studio
+managed-host preview/tunnel route, and the platform-owned Workers Builds release
+route. Workstation OAuth and a source push are not deployment authorization. The studio
 remains usable as a guest when auth is not configured.
+
+The [guest browser canary](scripts/guest-canary.mjs) has no default network target.
+Its [Node-only guard tests](tests/canary/guest-canary-guards.test.mjs) need no npm
+installation. Browser rehearsal requires installed dependencies, Chromium, and
+an explicitly started loopback server; live mode additionally requires a
+platform deployment receipt and explicit guest-canary approval. See the
+[canary runbook](docs/deployment.md#guest-browser-canary) before running it.
 
 ## License
 

@@ -17,6 +17,7 @@ type Props = {
   hint?: string;
   defaultValue?: number;
   showSlider?: boolean;
+  disabled?: boolean;
   onChange: (value: number) => void;
 };
 
@@ -59,11 +60,13 @@ export default function NumericField({
   hint,
   defaultValue,
   showSlider = true,
+  disabled = false,
   onChange,
 }: Props) {
   const [draft, setDraft] = useState(String(value));
   const [scrubbing, setScrubbing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const skipBlurCommitRef = useRef(false);
   const dragState = useRef<{
     startX: number;
     startValue: number;
@@ -117,6 +120,7 @@ export default function NumericField({
   }
 
   function onScrubStart(event: PointerEvent<HTMLElement>) {
+    if (disabled) return;
     if (event.button !== 0) return;
     event.preventDefault();
     dragState.current = {
@@ -162,8 +166,9 @@ export default function NumericField({
 
   return (
     <div
-      className={`numeric-field ${scrubbing ? "is-scrubbing" : ""}`}
+      className={`numeric-field ${scrubbing ? "is-scrubbing" : ""} ${disabled ? "is-disabled" : ""}`}
       data-testid={`numeric-${id}-field`}
+      data-state={disabled ? "inapplicable" : "active"}
     >
       <label className="numeric-label" htmlFor={`numeric-${id}`}>
         <span
@@ -181,6 +186,7 @@ export default function NumericField({
             onChange(next);
           }}
           role="presentation"
+          aria-disabled={disabled}
         >
           {label}
         </span>
@@ -200,11 +206,19 @@ export default function NumericField({
           data-testid={`numeric-${id}`}
           className="numeric-input"
           type="text"
+          disabled={disabled}
           inputMode="decimal"
           value={draft}
           aria-describedby={describedBy || undefined}
           onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
+          onBlur={() => {
+            if (skipBlurCommitRef.current) {
+              skipBlurCommitRef.current = false;
+              setDraft(String(value));
+              return;
+            }
+            commit();
+          }}
           onKeyDown={(event) => {
             if (event.key === "ArrowUp") {
               event.preventDefault();
@@ -215,6 +229,7 @@ export default function NumericField({
             } else if (event.key === "Enter") {
               commit();
             } else if (event.key === "Escape") {
+              skipBlurCommitRef.current = true;
               setDraft(String(value));
               event.currentTarget.blur();
             }
@@ -241,6 +256,7 @@ export default function NumericField({
             className="numeric-slider"
             data-testid={`numeric-${id}-slider`}
             type="range"
+            disabled={disabled}
             min={min}
             max={max}
             step={step}

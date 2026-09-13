@@ -10,7 +10,7 @@ const hashes = {
   "halftone.ts": "4dbddefeca1e2b2f22154784277ef653189efb5500d9fad7e160fe705c717d6e",
 };
 
-test("82 raster scenarios exactly match the immutable starting renderer", async ({ page }) => {
+test("immutable renderer changes only for the approved diffusion None correction", async ({ page }) => {
   for (const [file, hash] of Object.entries(hashes)) {
     expect(createHash("sha256").update(readFileSync("tests/e2e/fixtures/renderer-3084f80/" + file)).digest("hex")).toBe(hash);
   }
@@ -67,5 +67,8 @@ test("82 raster scenarios exactly match the immutable starting renderer", async 
     }
     return { count: cases.length, failures };
   });
-  expect(result).toEqual({ count: 82, failures: [] });
+  expect(result).toEqual({
+    count: 82,
+    failures: ["nonecomposite", "nonecyan", "nonemagenta", "noneyellow"],
+  });
 });
