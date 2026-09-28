@@ -3,6 +3,7 @@
  * Content relocated from the former stage-inspector "05 Glitch" step.
  */
 
+import { WORKSTATION_REVIEW } from "../../workflow-mode";
 import NumericField from "../../studio/NumericField";
 import { useStudioApi } from "../studio-api";
 import { PresetsSection } from "./PresetsSection";
@@ -310,7 +311,7 @@ export function GlitchPanel() {
         Reset glitch controls
       </button>
 
-      <PresetsSection />
+      {WORKSTATION_REVIEW && <PresetsSection />}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 /**
  * React binding for the app session spine. AppSessionProvider constructs the
- * controller once (IdbBackend with MemoryBackend fallback), installs the
- * lifecycle journal flush, binds the home-route project library, and exposes
- * the controller through context.
+ * controller once. The default browser workflow uses memory only; the
+ * explicitly enabled development workstation retains its IndexedDB library
+ * and lifecycle journal. Both share the verified asset/export services.
  */
 import {
   createContext,
@@ -12,6 +12,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { WORKSTATION_REVIEW } from "../workflow-mode";
+import { MemoryBackend } from "../storage";
 import { setProjectLibrary } from "../routes/Home";
 import { AppErrorBoundary } from "./ErrorBoundary";
 import { libraryWithCancellableImport } from "./library-import";
@@ -22,14 +24,31 @@ import {
 } from "./session-controller";
 
 /**
- * Production sessions always boot through AppSessionController.create().
- * Dev builds route through the storage quota seam module instead, whose
+ * Default sessions prepare one sample artwork in memory. The isolated
+ * development workstation boots through the storage quota seam, whose
  * backend wrapper simulates QuotaExceededError while a localStorage debug
  * flag is set (the Playwright quota E2E, mirroring the export-delay seam
  * idiom). The DEV guard is statically false in production builds, so the
  * dynamic import — and the whole seam chunk — is dead-code-eliminated.
  */
 async function createSessionController(): Promise<AppSessionController> {
+  if (!WORKSTATION_REVIEW) {
+    const controller = new AppSessionController({
+      backend: new MemoryBackend(),
+      backendKind: "memory",
+      ownsBackend: true,
+      sampleFactory: createSampleArtwork,
+    });
+    try {
+      await controller.startupMaintenance;
+      const id = await controller.openSampleAsUnsaved();
+      await controller.openProject(id);
+      return controller;
+    } catch (error) {
+      await controller.dispose();
+      throw error;
+    }
+  }
   if (import.meta.env.DEV) {
     const { createDevSessionController } = await import("./storage-quota-seam");
     return createDevSessionController({ sampleFactory: createSampleArtwork });
@@ -79,6 +98,7 @@ export function acquireSessionForMount(deps: {
   create: () => Promise<AppSessionController>;
   onReady: (controller: AppSessionController) => void;
   onTeardown?: () => void;
+  onError?: (error: unknown) => void;
 }): () => void {
   let alive = true;
   let owned: AppSessionController | null = null;
@@ -89,6 +109,8 @@ export function acquireSessionForMount(deps: {
     }
     owned = created;
     deps.onReady(created);
+  }).catch((error: unknown) => {
+    if (alive) deps.onError?.(error);
   });
   return () => {
     alive = false;
@@ -102,6 +124,7 @@ export function acquireSessionForMount(deps: {
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [controller, setController] = useState<AppSessionController | null>(null);
+  const [bootFailed, setBootFailed] = useState(false);
 
   useEffect(() => {
     let removeLifecycle: (() => void) | null = null;
@@ -110,11 +133,14 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       onReady: (created) => {
         // Wave-F UI seam: the bound library carries the cancellable-import
         // handle so the home surface can show progress and offer Cancel.
-        setProjectLibrary(libraryWithCancellableImport(created));
-        removeLifecycle = installLifecycleFlush(created);
+        if (WORKSTATION_REVIEW) {
+          setProjectLibrary(libraryWithCancellableImport(created));
+          removeLifecycle = installLifecycleFlush(created);
+        }
         setController(created);
       },
       onTeardown: () => setController(null),
+      onError: () => setBootFailed(true),
     });
     return () => {
       removeLifecycle?.();
@@ -124,7 +150,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppSessionContext.Provider value={controller}>
-      <AppErrorBoundary>{children}</AppErrorBoundary>
+      <AppErrorBoundary>{bootFailed ? <p role="alert">The artwork could not be opened. Reload to try again.</p> : children}</AppErrorBoundary>
     </AppSessionContext.Provider>
   );
 }

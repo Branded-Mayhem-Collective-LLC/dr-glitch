@@ -4,6 +4,7 @@
  * HalftoneStudio and flows through StudioApi.
  */
 
+import { WORKSTATION_REVIEW } from "../../workflow-mode";
 import NumericField from "../../studio/NumericField";
 import { DEFAULT_SETTINGS } from "../../studio/settings-defaults";
 import type { HalftoneSettings } from "../../studio/halftone";
@@ -151,7 +152,7 @@ export function HalftonePanel() {
         Reset halftone / CMYK controls
       </button>
 
-      <PresetsSection />
+      {WORKSTATION_REVIEW && <PresetsSection />}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import {
   type PointerEvent,
 } from "react";
 
+import { WORKSTATION_REVIEW } from "../workflow-mode";
+
 type Props = {
   id: string;
   label: string;
@@ -49,7 +51,35 @@ function roundClamp(value: number, min: number, max: number, step: number) {
  * hold Alt/Option for 0.1× precision. A click without movement selects the
  * value for direct typing.
  */
-export default function NumericField({
+export default function NumericField(props: Props) {
+  return WORKSTATION_REVIEW ? <ScrubNumericField {...props} /> : <NativeNumericField {...props} />;
+}
+
+function NativeNumericField({ id, label, value, min, max, step, unit, hint, disabled, onChange }: Props) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  function commit() {
+    const parsed = Number(draft);
+    const next = draft.trim() !== "" && Number.isFinite(parsed) ? quantize(parsed, min, max, step) : value;
+    setDraft(String(next));
+    if (next !== value) onChange(next);
+  }
+  return <div className="browser-number">
+    <label htmlFor={`numeric-${id}`}>{label} {unit && <span>({unit})</span>}</label>
+    <input id={`numeric-${id}`} type="number" value={draft} min={min} max={max} step={step}
+      disabled={disabled} aria-describedby={hint ? `numeric-${id}-hint` : undefined}
+      onChange={(event) => setDraft(event.target.value)} onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") { event.preventDefault(); commit(); }
+        if (event.key === "Escape") setDraft(String(value));
+      }} />
+    <input type="range" aria-label={`${label} slider`} min={min} max={max} step={step}
+      value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} />
+    {hint && <small id={`numeric-${id}-hint`}>{hint}</small>}
+  </div>;
+}
+
+function ScrubNumericField({
   id,
   label,
   value,

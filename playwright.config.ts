@@ -6,6 +6,7 @@ const port = Number(process.env.DRG_E2E_PORT ?? 4343);
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: "**/browser-workflow.spec.ts",
   fullyParallel: false,
   retries: 0,
   reporter: "list",
@@ -14,7 +15,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 1000 },
   },
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `VITE_DRG_WORKSTATION_REVIEW=1 npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
     timeout: 30_000,

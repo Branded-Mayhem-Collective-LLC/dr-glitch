@@ -641,3 +641,22 @@ describe("acquireSessionForMount (AppSessionProvider StrictMode contract)", () =
     expect(world.scheduler.pendingCount).toBe(0);
   });
 });
+
+
+describe("session provider boot failure", () => {
+  it("reports an active failure but ignores a failure after unmount", async () => {
+    const onError = vi.fn();
+    const onReady = vi.fn();
+    const error = new Error("Sample unavailable");
+    const cleanup = acquireSessionForMount({ create: async () => { throw error; }, onReady, onError });
+    await flush();
+    expect(onError).toHaveBeenCalledWith(error);
+    expect(onReady).not.toHaveBeenCalled();
+    cleanup();
+    onError.mockClear();
+    const cancel = acquireSessionForMount({ create: async () => { throw error; }, onReady, onError });
+    cancel();
+    await flush();
+    expect(onError).not.toHaveBeenCalled();
+  });
+});

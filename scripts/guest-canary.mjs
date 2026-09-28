@@ -445,7 +445,9 @@ try {
     }
   });
   if (liveTelemetry) await check('real sanitized error and application trace accepted by dedicated Sentry project', async () => {
-    await page.goto(origin + '/');
+    // Bare / restores this tab's last project; the import control lives on Home.
+    await page.goto(origin + '/home');
+    await expect(page.getByTestId('ws-home')).toBeVisible();
     // A real import failure exercises production capture without adding a
     // telemetry-only endpoint or a development hook to the shipped app.
     await page.getByTestId('ws-open-project-input').setInputFiles({ name: 'canary-invalid.drglitch', mimeType: 'application/zip', buffer: Buffer.from('invalid project archive') });

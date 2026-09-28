@@ -4,6 +4,12 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 **Current version:** `0.1.0`
 
+**Source restoration candidate:** the default route restores the continuous
+four-step, single-artwork browser workflow. Work is held in memory and is lost
+on reload; export the output before leaving. Existing saved workstation data
+is left untouched. See the [commit map and evidence](docs/reviews/2026-09-28-workflow-restoration.md).
+This candidate is not a release or clearance for external use.
+
 ## Feature list
 
 ### Artwork and document setup
@@ -15,10 +21,8 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 - Supports Letter, A4, 8×10, 9×12, 11×15, 11×17, 13×19, and 15×22-inch sheets.
 - Supports portrait and landscape orientation, with automatic orientation selection for clearly horizontal or vertical source files.
 - Scales artwork from 10% to 400%.
-- Positions artwork by direct canvas dragging or exact X/Y offsets in 240-DPI document pixels.
-- Provides one-click Center and Fit actions.
+- Centers artwork on the sheet and provides a Fit action.
 - Mirrors artwork horizontally or vertically for film-output workflows.
-- Resets artwork controls independently from the rest of the job.
 
 ### Halftone engine
 
@@ -36,23 +40,19 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 ### Separation workflow
 
-- Organizes the job into Artboard, Halftone / CMYK, Diffusion, Glitch, and Output / Registration stages.
-- Keeps the live proof visible while stage-specific controls remain in a collapsible inspector.
-- Provides a single ink rail for composite/C/M/Y/K selection, angle editing, and visibility.
-- Solos plates by click, keyboard, or numbered shortcut.
-- Labels hidden plates in both individual and composite proof states.
-- Tints active controls with the selected process ink without relying on color alone for identity.
-- Supports type-to-edit, horizontal value scrubbing, sliders, arrow-key nudging, and per-control reset.
-- Uses Shift for 10× numeric movement and Alt/Option for 0.1× precision where supported.
-- Supports proof zoom from 35% to 110%, zoom buttons, a slider, and double-click reset.
-- Supports Space-drag canvas panning without changing export geometry.
+- Keeps Artwork, Screen, Plate angles and Output controls in one scrolling inspector beside the live proof.
+- Opens the sample immediately; the file picker and canvas drop replace the single artwork while retaining its recipe, scale and mirror settings.
+- Provides explicit Composite/C/M/Y/K preview buttons, visibility checkboxes and angle fields.
+- Labels hidden plates in individual and composite proofs.
+- Uses ordinary numeric fields and sliders; Enter commits a typed value and Escape restores it.
+- Keeps diffusion and glitch controls in expandable Screen sections.
+- Supports proof zoom from 35% to 110%, zoom buttons, a slider and double-click reset.
 
 ### Preflight and job handoff
 
 - Reports hidden plates before export.
 - Detects exact shared screen angles and marks them for review without claiming guaranteed moiré prediction.
-- Reports whether registration marks are disabled.
-- Flags inverted dot polarity for confirmation.
+- Exposes registration and dot-polarity choices directly. Quick exports enforce hard safety limits; they retain the existing quick-export behavior without an additional warning-confirmation dialog.
 - Estimates screen marks per enabled plate and identifies the worst plate/angle.
 - Blocks exports above the 2,000,000-marks-per-plate safety limit instead of silently overloading the browser.
 - Builds a human-readable job ticket containing source, sheet, resolution, placement, mirroring, dot, tonal, angle, visibility, registration, polarity, density, and load details.
@@ -60,8 +60,8 @@ Browser-native CMYK halftone separations for screen-print production. DR.GLITCH 
 
 ### Export
 
-- Exports composite PNG (with 240-DPI metadata), JPEG, and TIFF proofs, plus vector SVG plate ZIPs.
-- Exports a ZIP containing four monochrome C/M/Y/K PNG plates, each with embedded 240-DPI metadata.
+- Exports composite PNG, JPEG and TIFF proofs with 240-DPI metadata, plus vector SVG plate ZIPs.
+- Exports enabled C/M/Y/K PNG plates (or K only in grayscale), each with embedded 240-DPI metadata, in a ZIP.
 - Includes `job-settings.json` in every plate ZIP with the source name, document geometry, separation settings, registration state, output dimensions, DPI, and screen-load estimate.
 - Uses deterministic, source-based filenames for proof and plate packages.
 - Performs all rendering and package generation client-side.
@@ -80,28 +80,29 @@ Saved cloud projects and cross-device project persistence are **not implemented 
 
 ### Accessibility and responsive behavior
 
-- Provides visible focus treatment and keyboard access for stage, plate, angle, numeric, auth, and session controls.
-- Gives each plate an accessible name containing its identity, angle, and visible/hidden state.
-- Preserves native Space activation on interactive controls while using Space-drag only on the proof surface.
-- Prevents global studio shortcuts from firing while the operator is typing.
-- Avoids color-only plate identification by pairing ink with C/M/Y/K labels and angles.
-- Honors reduced-motion preferences across process animation and loading states.
-- Presents a dedicated desktop-required message on narrow/touch layouts because full-resolution separation work requires a pointer and large canvas.
+- Provides labelled native controls, visible keyboard focus and explicit plate names.
+- Keeps the proof and inspector available below 1280×800; narrow layouts stack them.
+- Preserves keyboard access to artwork, custom-shape dialogs, export and account controls.
+- Does not install workstation tool shortcuts, scrub gestures or Space-drag panning in the default workflow.
 
-## Keyboard map
+## Isolated workstation review
 
-| Key | Action |
-| --- | --- |
-| `` ` `` | View the composite proof |
-| `1` / `2` / `3` / `4` | Solo C / M / Y / K |
-| `[` / `]` | Decrease / increase cell size |
-| `Space` + drag | Pan the proof |
-| `Enter` on a plate | Solo that plate |
-| `Alt` + `Enter` on a plate | Toggle plate visibility |
-| Arrow keys in numeric fields | Nudge the current value |
-| `Shift` + arrow/drag | 10× numeric movement |
-| `Alt`/`Option` + arrow/drag | 0.1× numeric precision |
-| `Enter` / `Escape` in a numeric field | Commit / revert the draft |
+The superseded project library, multi-layer editor, docking, floating panels,
+layout persistence and scrub controls remain in source with their tests. To
+review them locally, explicitly start:
+
+```bash
+VITE_DRG_WORKSTATION_REVIEW=1 npm run dev -- --host 127.0.0.1 --port 4343 --strictPort
+```
+
+The flag is also guarded by Vite's `DEV` constant and cannot enable the
+workstation in a production build. No default route opens its saved library.
+`npm run test:e2e` runs the retained workstation suite, then the default workflow
+suite. `npm run test:restoration` runs only the restored workflow; after a build,
+`DRG_E2E_BUILT_CLIENT=1 npm run test:restoration` checks the built client on the
+same temporary loopback port. The original guest canary remains a workstation
+harness; its Node guard tests remain valid, but it does not attest this new
+workflow. All live execution still requires separate authority.
 
 ## Stack
 
@@ -145,8 +146,8 @@ node --test tests/canary/guest-canary-guards.test.mjs
 ```
 
 Open `http://127.0.0.1:4343` in a desktop browser. Use the sample immediately
-or upload a PNG/JPEG/WebP; no account is required. Open **Halftone / CMYK** for dot
-and angle controls, and **Export** for proof and plate packages.
+or upload a PNG/JPEG/WebP; no account is required. Use **Screen** and **Plate angles**
+for separation controls, and **Export** for proof and plate packages.
 
 In VS Code, choose **Terminal → Run Task → DR.GLITCH: Start local studio**.
 Keep that terminal running while testing. Stop it with Ctrl+C or Terminate
