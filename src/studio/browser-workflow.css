@@ -1,0 +1,55 @@
+/* Scoped restoration of the 1906158 continuous inspector + plate-tab layout.
+   Existing workstation styles remain untouched for the isolated review mode. */
+.browser-workflow { --ink-active: #ff8a54 !important; --muted: #bbb9b3; --faint: #bbb9b3; color: #f3f0e8; font-size: 13px; }
+.browser-workflow button, .browser-workflow summary { cursor: pointer; }
+.browser-workflow button:disabled { opacity: .5; cursor: default; }
+.browser-workflow button:focus-visible, .browser-workflow input:focus-visible, .browser-workflow select:focus-visible, .browser-workflow summary:focus-visible { outline: 2px solid #ff8a54; outline-offset: 2px; box-shadow: none; }
+.browser-topbar { min-height: 64px; display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: #181a1d; border-bottom: 1px solid #373a3f; }
+.browser-topbar strong { font-size: 16px; }
+.browser-topbar small { display: block; color: #bbb9b3; font-size: 10px; margin-top: 4px; }
+.browser-source { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #bbb9b3; }
+.browser-topbar nav { display: flex; gap: 10px; align-items: center; }
+.browser-workflow button, .browser-export-menu summary { border: 1px solid #55585e; background: #272a2e; color: #f3f0e8; padding: 8px 10px; min-height: 34px; border-radius: 4px; }
+.browser-topbar button, .browser-export-menu summary { display: flex; align-items: center; gap: 8px; }
+.browser-export-menu { position: relative; z-index: 25; }
+.browser-export-menu summary { background: #ff8a54; color: #181a1d; list-style: none; }
+.browser-export-menu > div { position: absolute; right: 0; top: 42px; width: 250px; padding: 6px; background: #202226; border: 1px solid #55585e; display: grid; gap: 4px; }
+.browser-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); height: calc(100dvh - 65px); min-height: 480px; }
+.browser-inspector { overflow-y: auto; background: #202226; border-right: 1px solid #373a3f; padding: 20px; }
+.browser-inspector h1 { font-size: 18px; margin: 0 0 20px; }
+.browser-step { display: grid; gap: 12px; padding: 20px 0; border-top: 1px solid #373a3f; }
+.browser-step h2 { display: flex; gap: 10px; align-items: center; margin: 0 0 6px; font-size: 14px; }
+.browser-step h2 > span { color: #ff8a54; }
+.browser-step p, .browser-step small, .browser-number small { font-size: 11px; color: #bbb9b3; line-height: 1.5; }
+.browser-step details > summary { padding: 10px 0; font-weight: 600; }
+.browser-upload { text-align: left; display: grid; gap: 7px; overflow-wrap: anywhere; }
+.browser-upload span { color: #ff8a54; }
+.browser-workflow .select-field { display: grid; gap: 6px; color: #f3f0e8; font-size: 12px; }
+.browser-workflow .select-field select, .browser-number input[type=number] { width: 100%; min-width: 0; background: #181a1d; color: #f3f0e8; border: 1px solid #55585e; min-height: 32px; padding: 6px; font-size: 12px; border-radius: 3px; }
+.browser-number { display: grid; grid-template-columns: minmax(0, 1fr) 80px; align-items: center; gap: 7px; }
+.browser-number label { font-size: 12px; cursor: default; }
+.browser-number label span { color: #bbb9b3; }
+.browser-number input[type=range], .browser-number small { grid-column: 1 / -1; width: 100%; }
+.browser-workflow input[type=range], .browser-workflow input[type=checkbox] { accent-color: #ff8a54; }
+.browser-toggle { display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: 12px; }
+.browser-plate-row { display: grid; grid-template-columns: 42px 1fr; align-items: start; gap: 8px; }
+.browser-visibility { display: flex; gap: 5px; align-items: center; padding-top: 8px; }
+.browser-output-buttons { display: grid; gap: 6px; }
+.browser-plate-tabs { display: flex; gap: 3px; }
+.browser-plate-tabs button { min-width: 30px; padding: 6px; }
+.browser-plate-tabs button[aria-pressed=true] { color: #181a1d; background: #ff8a54; }
+.browser-workflow .canvas-stage { background: #262626; grid-template-rows: auto minmax(0, 1fr) 42px; box-shadow: none; }
+.browser-workflow .stage-toolbar { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 16px; background: #202226; }
+.browser-workflow .stage-body { background: #262626; padding: 0; }
+.browser-workflow .canvas-scroll { background: #303030; border: 0; box-shadow: none; padding: 32px; }
+.browser-workflow .artboard-wrap { border: 0; box-shadow: 0 6px 22px #0006; transition: none; will-change: auto; min-width: 100px; }
+.browser-workflow .stage-footer { background: #202226; }
+.browser-workflow .proof-contract { display: none; }
+.browser-workflow .field-grid, .browser-workflow .ws-panel-stack { display: grid; gap: 12px; }
+.browser-workflow .toggle-row, .browser-workflow .control-state-note { background: transparent; color: #f3f0e8; border-color: #55585e; }
+.browser-workflow .diffusion-section-label { color: #bbb9b3; }
+.browser-export-progress, .browser-export-error { position: fixed; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 14px; display: flex; gap: 12px; align-items: center; background: #202226; color: #f3f0e8; border: 1px solid #ff8a54; max-width: 90vw; }
+@media (max-width: 1050px) { .browser-source { display: none; } .browser-topbar { justify-content: space-between; } .browser-workflow .view-status, .browser-workflow .quality-note { display: none; } }
+@media (max-width: 700px) { .browser-layout { grid-template-columns: 1fr; height: auto; } .browser-layout > .canvas-stage { grid-row: 1; height: 55dvh; min-height: 320px; } .browser-inspector { max-height: 65dvh; } .browser-topbar { padding: 10px; gap: 8px; } .browser-topbar small { display: none; } .browser-topbar button { font-size: 11px; } }
+
+.browser-workflow .session-badge { position: static; margin-bottom: 16px; width: fit-content; }

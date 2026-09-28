@@ -3,6 +3,7 @@
  * Content relocated from the former stage-inspector "04 Diffusion" step.
  */
 
+import { WORKSTATION_REVIEW } from "../../workflow-mode";
 import NumericField from "../../studio/NumericField";
 import type { HalftoneSettings } from "../../studio/halftone";
 import { useStudioApi } from "../studio-api";
@@ -177,7 +178,7 @@ export function DiffusionPanel() {
         Reset diffusion controls
       </button>
 
-      <PresetsSection />
+      {WORKSTATION_REVIEW && <PresetsSection />}
     </div>
   );
 }

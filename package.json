@@ -15,10 +15,11 @@
     "deploy": "npm run build && wrangler deploy -c dist/halftone_web/wrangler.json",
     "test": "vitest run --project unit",
     "test:worker": "vitest run --project worker",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test && playwright test --config playwright.restoration.config.ts",
     "lint": "eslint src worker db --ignore-pattern dist",
     "db:generate": "drizzle-kit generate",
-    "auth:schema": "npx @better-auth/cli@latest generate --config ./worker/auth.cli-config.ts --output ./db/auth.schema.ts"
+    "auth:schema": "npx @better-auth/cli@latest generate --config ./worker/auth.cli-config.ts --output ./db/auth.schema.ts",
+    "test:restoration": "playwright test --config playwright.restoration.config.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.4",

@@ -63,6 +63,9 @@ import {
 } from "react";
 
 import { DEFAULT_SETTINGS } from "./settings-defaults";
+import { WORKSTATION_REVIEW } from "../workflow-mode";
+import { BrowserWorkflow, PreviewTabs } from "./BrowserWorkflow";
+import type { ComponentProps } from "react";
 import { WorkspaceShell } from "../workspace/WorkspaceShell";
 import {
   StudioApiContext,
@@ -161,6 +164,10 @@ function svgDimensions(svg: string): { width: number; height: number } {
     }
   }
   return { width: 100, height: 100 };
+}
+
+function CanvasSurface(props: ComponentProps<typeof EditingSurface>) {
+  return WORKSTATION_REVIEW ? <EditingSurface {...props} /> : <>{props.children}</>;
 }
 
 export default function HalftoneStudio() {
@@ -691,8 +698,9 @@ export default function HalftoneStudio() {
     [updateSetting],
   );
 
-  /* Space-drag pan arming (session-only). */
+  /* Space-drag pan belongs to the isolated workstation. */
   useEffect(() => {
+    if (!WORKSTATION_REVIEW) return;
     function down(event: KeyboardEvent) {
       if (event.code !== "Space" || event.repeat) return;
       if (isInteractiveTarget(event.target)) return;
@@ -984,6 +992,21 @@ export default function HalftoneStudio() {
       if (intent.mode === "replace") {
         // Parity: replaced artwork is screened immediately (never "clean").
         layer.recipe.mode = "halftone";
+      }
+      if (!WORKSTATION_REVIEW && intent.mode === "replace") {
+        // The pre-redesign browser replaces the source, keeping the operator's
+        // screen recipe, density and document scale/mirror settings.
+        const previous = currentCore.layers.find((item) => item.id === intent.targetLayerId);
+        if (previous) {
+          layer.recipe = structuredClone(previous.recipe);
+          layer.opacity = previous.opacity;
+          layer.transform = {
+            ...layer.transform,
+            scale: { ...previous.transform.scale },
+            flipH: previous.transform.flipH,
+            flipV: previous.transform.flipV,
+          };
+        }
       }
       // ADD keeps createLayerFromAsset's contract: Clean mode, Glitch off.
 
@@ -1773,9 +1796,10 @@ export default function HalftoneStudio() {
       )}
 
       <div className="stage-toolbar">
+        {!WORKSTATION_REVIEW && <PreviewTabs />}
         <div className="view-status">
           <Sparkles size={14} />
-          <span>Live browser preview · Space-drag pans</span>
+          <span>{WORKSTATION_REVIEW ? "Live browser preview · Space-drag pans" : "Live browser preview"}</span>
         </div>
         <div className="proof-contract" aria-label="Current proof state">
           {/* Truthful mode label: CLEAN prints continuous tone, unscreened. */}
@@ -1792,10 +1816,7 @@ export default function HalftoneStudio() {
       </div>
 
       <div className="stage-body">
-        <EditingSurface
-          canvasRef={canvasRef}
-          viewKey={`${zoom}:${pan.x}:${pan.y}:${core.artboard.widthPx}x${core.artboard.heightPx}`}
-        >
+        <CanvasSurface canvasRef={canvasRef} viewKey={`${zoom}:${pan.x}:${pan.y}:${core.artboard.widthPx}x${core.artboard.heightPx}`}>
         <div className="canvas-scroll">
           <div
             className="artboard-wrap"
@@ -1812,7 +1833,7 @@ export default function HalftoneStudio() {
               data-testid="artwork-canvas"
               aria-label={settings.grayscale ? "Live grayscale halftone preview" : "Live CMYK halftone preview"}
             />
-            <ArtboardOverlays canvasRef={canvasRef} panArmed={spaceHeld || panning} />
+            {WORKSTATION_REVIEW && <ArtboardOverlays canvasRef={canvasRef} panArmed={spaceHeld || panning} />}
             <span className="artboard-label" data-testid="artboard-label">
               {activePlate === "composite"
                 ? hiddenPlates.length === 0
@@ -1828,7 +1849,7 @@ export default function HalftoneStudio() {
             </span>
           </div>
         </div>
-        </EditingSurface>
+        </CanvasSurface>
       </div>
 
       <div className="stage-footer">
@@ -1859,7 +1880,7 @@ export default function HalftoneStudio() {
             /* Shares the Proof drawer numeric-zoom field's unit + hint as its
                description (selector contract: type-first zoom, slider for
                drag adjustment). */
-            aria-describedby="numeric-zoom-unit numeric-zoom-hint"
+            aria-describedby={WORKSTATION_REVIEW ? "numeric-zoom-unit numeric-zoom-hint" : undefined}
           />
           <button
             className="icon-button"
@@ -1884,13 +1905,13 @@ export default function HalftoneStudio() {
 
   return (
     <main
-      className="studio-shell"
+      className={`studio-shell ${WORKSTATION_REVIEW ? "" : "browser-workflow"}`}
       data-studio-root
       style={{ "--ink-active": activeInk } as CSSProperties}
     >
       <StudioApiContext.Provider value={api}>
         <ProjectUiContext.Provider value={projectUi}>
-          <WorkspaceShell canvas={canvasStage} />
+          {WORKSTATION_REVIEW ? <WorkspaceShell canvas={canvasStage} /> : <BrowserWorkflow canvas={canvasStage} />}
 
           {dirtyGuard !== null && (
             <DirtyWorkDialog
